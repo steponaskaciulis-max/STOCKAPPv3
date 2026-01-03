@@ -1,9 +1,20 @@
-// API Configuration
-const RENDER_API_URL = 'https://stockappv3.onrender.com'; // Your Render API
-const USE_RENDER_API = true; // Primary method - Render API (most reliable)
+// API Configuration - IEX Cloud (FREE, legitimate, comprehensive data)
+// Get your FREE API key at: https://iexcloud.io/cloud-login#/register
+// Free tier: 50,000 messages per month - plenty for personal use
+// No credit card required, just sign up and get your token
+const IEX_CLOUD_TOKEN = 'pk_test_YOUR_TOKEN_HERE'; // Replace with your free token from iexcloud.io
+const USE_IEX_CLOUD = true; // Primary method - legitimate, reliable, comprehensive
 
-// Using Yahoo Finance via public endpoint (no API key needed) - Fallback
-const USE_YAHOO_FINANCE_DIRECT = true; // Fallback method when Render API fails
+// Alpha Vantage (backup)
+const ALPHA_VANTAGE_API_KEY = 'demo';
+const USE_ALPHA_VANTAGE = false; // Backup only
+
+// Render API (backup - disabled)
+const RENDER_API_URL = 'https://stockappv3.onrender.com';
+const USE_RENDER_API = false; // Disabled - Yahoo Finance blocked
+
+// Yahoo Finance (disabled)
+const USE_YAHOO_FINANCE_DIRECT = false; // Disabled - unreliable
 
 // Finnhub API (requires free API key)
 const USE_FINNHUB_API = false; // Disabled - requires API key
@@ -211,44 +222,136 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Use Render API first, fallback to Yahoo Finance direct
+// API Functions - Use IEX Cloud (legitimate, comprehensive, free)
 async function fetchStockData(ticker) {
     try {
-        // Try Render API first (has complete financial data from yahoo-finance2)
-        if (USE_RENDER_API) {
+        // Use IEX Cloud (legitimate, free, comprehensive financial data)
+        if (USE_IEX_CLOUD) {
             try {
-                const renderData = await fetchRenderAPI(ticker);
-                if (renderData && renderData.pe !== 'N/A' && renderData.pe !== undefined) {
-                    console.log('✅ Render API succeeded for', ticker);
-                    return renderData;
+                const iexData = await fetchIEXCloudData(ticker);
+                if (iexData && iexData.pe !== 'N/A' && iexData.pe !== undefined) {
+                    console.log('✅ IEX Cloud succeeded for', ticker);
+                    return iexData;
                 }
-            } catch (renderError) {
-                console.warn('Render API failed, trying Yahoo Finance direct:', renderError.message);
+            } catch (iexError) {
+                console.warn('IEX Cloud failed:', iexError.message);
+                if (iexError.message.includes('pk_test') || iexError.message.includes('token')) {
+                    alert('Please get a free API token from https://iexcloud.io/cloud-login#/register and replace "pk_test_YOUR_TOKEN_HERE" in app.js');
+                }
             }
         }
         
-        // Fallback to Yahoo Finance direct method (works even when Render API is blocked)
-        console.log('🔄 Trying Yahoo Finance direct method...');
-        try {
-            return await fetchYahooFinanceDirect(ticker);
-        } catch (yahooError) {
-            console.warn('Yahoo Finance direct failed, trying alternative:', yahooError.message);
+        // Fallback to Alpha Vantage
+        if (USE_ALPHA_VANTAGE) {
             try {
-                return await fetchYahooFinanceAlternative(ticker);
-            } catch (altError) {
-                console.warn('All Yahoo Finance methods failed:', altError.message);
-                // Final fallback to Alpha Vantage
-                try {
-                    return await fetchAlphaVantageData(ticker);
-                } catch (avError) {
-                    throw new Error('All data sources failed');
+                const avData = await fetchAlphaVantageData(ticker);
+                if (avData) {
+                    console.log('✅ Alpha Vantage succeeded for', ticker);
+                    return avData;
                 }
+            } catch (avError) {
+                console.warn('Alpha Vantage failed:', avError.message);
             }
         }
+        
+        throw new Error('All data sources failed');
     } catch (error) {
         console.error('Error fetching stock data:', error);
         console.error(`Failed to fetch stock data for ${ticker}: ${error.message}`);
         return null;
+    }
+}
+
+// Fetch from IEX Cloud API (FREE, legitimate, comprehensive)
+async function fetchIEXCloudData(ticker) {
+    try {
+        console.log('📊 Fetching from IEX Cloud:', ticker);
+        
+        // Fetch quote (price, volume, etc.)
+        const quoteUrl = `https://cloud.iexapis.com/stable/stock/${ticker}/quote?token=${IEX_CLOUD_TOKEN}`;
+        const quoteResponse = await fetch(quoteUrl);
+        
+        // Fetch company info (sector, industry)
+        const companyUrl = `https://cloud.iexapis.com/stable/stock/${ticker}/company?token=${IEX_CLOUD_TOKEN}`;
+        const companyResponse = await fetch(companyUrl);
+        
+        // Fetch key stats (P/E, PEG, EPS, etc.)
+        const statsUrl = `https://cloud.iexapis.com/stable/stock/${ticker}/stats?token=${IEX_CLOUD_TOKEN}`;
+        const statsResponse = await fetch(statsUrl);
+        
+        // Fetch historical prices for chart
+        const chartUrl = `https://cloud.iexapis.com/stable/stock/${ticker}/chart/1y?token=${IEX_CLOUD_TOKEN}`;
+        const chartResponse = await fetch(chartUrl);
+        
+        if (!quoteResponse.ok) {
+            if (quoteResponse.status === 401 || quoteResponse.status === 403) {
+                throw new Error('Invalid IEX Cloud token. Please get a free token from https://iexcloud.io/cloud-login#/register');
+            }
+            throw new Error(`IEX Cloud API error: ${quoteResponse.status}`);
+        }
+        
+        const quote = await quoteResponse.json();
+        const company = companyResponse.ok ? await companyResponse.json() : {};
+        const stats = statsResponse.ok ? await statsResponse.json() : {};
+        const chartData = chartResponse.ok ? await chartResponse.json() : [];
+        
+        const currentPrice = quote.latestPrice || quote.close || 0;
+        const closes = chartData.map(day => day.close || day.price).filter(Boolean);
+        const chartDataArray = closes.length > 0 ? closes : [currentPrice];
+        
+        // Calculate changes
+        const currentIdx = chartDataArray.length - 1;
+        const oneDayAgo = chartDataArray[currentIdx - 1] || currentPrice;
+        const oneWeekAgo = chartDataArray[Math.max(0, currentIdx - 5)] || currentPrice;
+        const oneMonthAgo = chartDataArray[Math.max(0, currentIdx - 20)] || currentPrice;
+        
+        const change1D = oneDayAgo ? ((currentPrice - oneDayAgo) / oneDayAgo) * 100 : (quote.changePercent ? quote.changePercent * 100 : 0);
+        const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
+        const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
+        
+        const high52W = quote.week52High || stats.week52high || currentPrice;
+        const low52W = quote.week52Low || stats.week52low || currentPrice;
+        const delta52W = high52W ? ((currentPrice - high52W) / high52W) * 100 : 0;
+        
+        // Get financial metrics
+        const pe = stats.peRatio || stats.trailingPE || 'N/A';
+        const peg = stats.pegRatio || 'N/A';
+        const eps = stats.ttmEPS || stats.latestEPS || 'N/A';
+        const dividendYield = stats.dividendYield || quote.dividendYield || 0;
+        const marketCap = quote.marketCap || stats.marketcap || 'N/A';
+        const volume = quote.latestVolume || quote.volume || 0;
+        const avgVolume = quote.avgTotalVolume || stats.avg30Volume || 'N/A';
+        
+        console.log('✅ IEX Cloud data fetched for', ticker);
+        console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
+        console.log('   Dividend:', dividendYield, '| Market Cap:', marketCap);
+        console.log('   Sector:', company.sector, '| Industry:', company.industry);
+        
+        return {
+            ticker: ticker.toUpperCase(),
+            sector: company.sector || 'N/A',
+            industry: company.industry || 'N/A',
+            price: parseFloat(currentPrice).toFixed(2),
+            change1D: change1D.toFixed(2),
+            change1W: change1W.toFixed(2),
+            change1M: change1M.toFixed(2),
+            pe: pe !== 'N/A' && pe !== null && pe !== undefined && pe !== 0 ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' && peg !== null && peg !== undefined && peg !== 0 ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' && eps !== null && eps !== undefined && eps !== 0 ? parseFloat(eps).toFixed(2) : 'N/A',
+            dividend: dividendYield && dividendYield !== 0 ? (parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
+            high52W: parseFloat(high52W).toFixed(2),
+            low52W: parseFloat(low52W).toFixed(2),
+            delta52W: delta52W.toFixed(2),
+            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined && marketCap !== 0 ? formatMarketCap(marketCap) : 'N/A',
+            volume: formatVolume(volume),
+            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined && avgVolume !== 0 ? formatVolume(avgVolume) : 'N/A',
+            chartData: chartDataArray,
+            chartTimestamps: [],
+            fullChartData: chartDataArray
+        };
+    } catch (error) {
+        console.error('IEX Cloud error:', error);
+        throw error;
     }
 }
 
