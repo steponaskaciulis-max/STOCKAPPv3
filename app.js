@@ -518,29 +518,20 @@ async function fetchFMPData(ticker) {
 async function fetchRenderAPI(ticker) {
     try {
         console.log('📡 Fetching from Render API:', ticker);
-        const response = await fetch(`${RENDER_API_URL}/stock/${ticker}`);
+        let response = await fetch(`${RENDER_API_URL}/stock/${ticker}`);
         
-        if (!response.ok) {
-            // Handle rate limiting - wait and retry once
-            if (response.status === 429 || response.status === 503) {
-                console.log('⏳ API rate limited, waiting 2 seconds...');
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                const retryResponse = await fetch(`${RENDER_API_URL}/stock/${ticker}`);
-                if (!retryResponse.ok) {
-                    throw new Error(`HTTP ${retryResponse.status}: Rate limited`);
-                }
-                const retryData = await retryResponse.json();
-                if (retryData.error && !retryData.error.includes('Too Many')) {
-                    throw new Error(retryData.error);
-                }
-                // Continue with retryData if successful
-                const data = retryData;
-            } else {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
+        // Handle rate limiting - wait and retry once
+        if (!response.ok && (response.status === 429 || response.status === 503)) {
+            console.log('⏳ API rate limited, waiting 2 seconds...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            response = await fetch(`${RENDER_API_URL}/stock/${ticker}`);
         }
         
-        const data = response.ok ? await response.json() : null;
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
         
         if (!data) {
             throw new Error('No data received from API');
