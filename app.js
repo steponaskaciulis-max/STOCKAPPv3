@@ -1,10 +1,9 @@
 // API Configuration
 const RENDER_API_URL = 'https://stockapp-kym2.onrender.com'; // Your Render API
-const USE_RENDER_API = false; // Disabled - Render API not available
+const USE_RENDER_API = true; // Primary method - Render API (most reliable)
 
-// Using Yahoo Finance via public endpoint (no API key needed)
-// This uses a different method that should work more reliably
-const USE_YAHOO_FINANCE_DIRECT = true; // Primary method - direct Yahoo Finance access
+// Using Yahoo Finance via public endpoint (no API key needed) - Fallback
+const USE_YAHOO_FINANCE_DIRECT = false; // Fallback method
 
 // Finnhub API (requires free API key)
 const USE_FINNHUB_API = false; // Disabled - requires API key
@@ -212,16 +211,28 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Use Yahoo Finance direct method
+// API Functions - Use Render API first (most reliable)
 async function fetchStockData(ticker) {
     try {
-        // Use Yahoo Finance direct method (no API key needed)
+        // Try Render API first (has complete financial data from yahoo-finance2)
+        if (USE_RENDER_API) {
+            try {
+                const renderData = await fetchRenderAPI(ticker);
+                if (renderData && renderData.pe !== 'N/A' && renderData.pe !== undefined) {
+                    console.log('✅ Render API succeeded for', ticker);
+                    return renderData;
+                }
+            } catch (renderError) {
+                console.warn('Render API failed, trying Yahoo Finance:', renderError.message);
+            }
+        }
+        
+        // Fallback to Yahoo Finance direct method
         if (USE_YAHOO_FINANCE_DIRECT) {
             try {
                 return await fetchYahooFinanceDirect(ticker);
             } catch (yahooError) {
                 console.warn('Yahoo Finance direct failed, trying alternative:', yahooError.message);
-                // Try alternative method
                 try {
                     return await fetchYahooFinanceAlternative(ticker);
                 } catch (altError) {
@@ -231,7 +242,7 @@ async function fetchStockData(ticker) {
             }
         }
         
-        // Fallback to Alpha Vantage
+        // Final fallback to Alpha Vantage
         return await fetchAlphaVantageData(ticker);
     } catch (error) {
         console.error('Error fetching stock data:', error);
@@ -510,7 +521,7 @@ async function fetchRenderAPI(ticker) {
         const response = await fetch(`${RENDER_API_URL}/stock/${ticker}`);
         
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
         const data = await response.json();
@@ -519,16 +530,18 @@ async function fetchRenderAPI(ticker) {
             throw new Error(data.error);
         }
         
+        console.log('✅ Render API response received:', Object.keys(data));
+        
         // Transform Render API response to match our format
         const currentPrice = data.price || data.regularMarketPrice || 0;
         const chartData = data.chartData || [currentPrice];
         
-        // Calculate changes if not provided
+        // Use provided changes or calculate
         let change1D = parseFloat(data.change1D) || 0;
         let change1W = parseFloat(data.change1W) || 0;
         let change1M = parseFloat(data.change1M) || 0;
         
-        if (chartData.length > 1) {
+        if (chartData.length > 1 && (!change1D || !change1W || !change1M)) {
             const currentIdx = chartData.length - 1;
             const oneDayAgo = chartData[currentIdx - 1] || currentPrice;
             const oneWeekAgo = chartData[Math.max(0, currentIdx - 5)] || currentPrice;
@@ -540,26 +553,41 @@ async function fetchRenderAPI(ticker) {
         }
         
         const high52W = parseFloat(data.fiftyTwoWeekHigh) || currentPrice;
+        const low52W = parseFloat(data.fiftyTwoWeekLow) || currentPrice;
         const delta52W = high52W ? ((currentPrice - high52W) / high52W) * 100 : 0;
         
+        // Get financial metrics (handle both formats)
+        const pe = data.trailingPE || data.peRatio || 'N/A';
+        const peg = data.pegRatio || 'N/A';
+        const eps = data.trailingEps || data.eps || 'N/A';
+        const dividendYield = data.dividendYield || data.dividendRate || 0;
+        const marketCap = data.marketCap || 'N/A';
+        const volume = data.volume || data.regularMarketVolume || 0;
+        const avgVolume = data.averageVolume || 'N/A';
+        
+        console.log('✅ Render API data processed for', ticker);
+        console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
+        console.log('   Dividend:', dividendYield, '| Market Cap:', marketCap);
+        console.log('   Sector:', data.sector, '| Industry:', data.industry);
+        
         return {
-            ticker: data.symbol || ticker.toUpperCase(),
+            ticker: data.symbol || data.ticker || ticker.toUpperCase(),
             sector: data.sector || 'N/A',
-            industry: 'N/A',
+            industry: data.industry || 'N/A',
             price: parseFloat(currentPrice).toFixed(2),
             change1D: change1D.toFixed(2),
             change1W: change1W.toFixed(2),
             change1M: change1M.toFixed(2),
-            pe: data.trailingPE || data.peRatio || 'N/A',
-            peg: data.pegRatio || 'N/A',
-            eps: data.trailingEps || data.eps || 'N/A',
-            dividend: data.dividendYield || data.dividendRate || '0.00',
+            pe: pe !== 'N/A' && pe !== null && pe !== undefined && pe !== 0 ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' && peg !== null && peg !== undefined && peg !== 0 ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' && eps !== null && eps !== undefined && eps !== 0 ? parseFloat(eps).toFixed(2) : 'N/A',
+            dividend: dividendYield && dividendYield !== 0 ? (typeof dividendYield === 'string' ? parseFloat(dividendYield) : parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
             high52W: high52W.toFixed(2),
-            low52W: (parseFloat(data.fiftyTwoWeekLow) || currentPrice).toFixed(2),
+            low52W: low52W.toFixed(2),
             delta52W: delta52W.toFixed(2),
-            marketCap: data.marketCap ? formatMarketCap(data.marketCap) : 'N/A',
-            volume: formatVolume(data.regularMarketVolume || 0),
-            avgVolume: 'N/A',
+            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined && marketCap !== 0 ? formatMarketCap(marketCap) : 'N/A',
+            volume: formatVolume(volume),
+            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined && avgVolume !== 0 ? formatVolume(avgVolume) : 'N/A',
             chartData: chartData,
             chartTimestamps: [],
             fullChartData: chartData
