@@ -32,11 +32,25 @@ app.get('/stock/:ticker', async (req, res) => {
     
     console.log(`📊 Fetching COMPLETE data for: ${tickerUpper}`);
     
-    // Fetch comprehensive quote data
-    const quote = await yahooFinance.quote(tickerUpper);
+    // Fetch comprehensive quote data with retry logic
+    let quote = null;
+    let retries = 3;
+    
+    while (retries > 0 && !quote) {
+      try {
+        quote = await yahooFinance.quote(tickerUpper);
+        if (quote) break;
+      } catch (quoteError) {
+        console.log(`Quote fetch attempt failed, retries left: ${retries - 1}`);
+        retries--;
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+        }
+      }
+    }
     
     if (!quote) {
-      return res.status(404).json({ error: 'Stock not found' });
+      return res.status(404).json({ error: 'Stock not found', message: 'Unable to fetch stock data from Yahoo Finance' });
     }
     
     // Fetch quoteSummary for additional financial metrics
@@ -46,19 +60,26 @@ app.get('/stock/:ticker', async (req, res) => {
         modules: ['summaryProfile', 'financialData', 'defaultKeyStatistics']
       });
     } catch (summaryError) {
-      console.log('QuoteSummary not available, using quote data only');
+      console.log('QuoteSummary not available, using quote data only:', summaryError.message);
     }
     
     // Fetch historical data for chart (last year for better data)
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setFullYear(startDate.getFullYear() - 1);
-    
-    const historical = await yahooFinance.historical(tickerUpper, {
-      period1: startDate,
-      period2: endDate,
-      interval: '1d'
-    });
+    let historical = [];
+    try {
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setFullYear(startDate.getFullYear() - 1);
+      
+      historical = await yahooFinance.historical(tickerUpper, {
+        period1: startDate,
+        period2: endDate,
+        interval: '1d'
+      });
+    } catch (historicalError) {
+      console.log('Historical data not available, using minimal data:', historicalError.message);
+      // Use just current price for chart if historical fails
+      historical = [{ close: quote.regularMarketPrice || quote.price || 0 }];
+    }
     
     // Extract chart data (closing prices)
     const chartData = historical.map(day => day.close).filter(Boolean);
