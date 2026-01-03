@@ -3,7 +3,7 @@ const RENDER_API_URL = 'https://stockappv3.onrender.com'; // Your Render API
 const USE_RENDER_API = true; // Primary method - Render API (most reliable)
 
 // Using Yahoo Finance via public endpoint (no API key needed) - Fallback
-const USE_YAHOO_FINANCE_DIRECT = false; // Fallback method
+const USE_YAHOO_FINANCE_DIRECT = true; // Fallback method when Render API fails
 
 // Finnhub API (requires free API key)
 const USE_FINNHUB_API = false; // Disabled - requires API key
@@ -211,7 +211,7 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Use Render API first (most reliable)
+// API Functions - Use Render API first, fallback to Yahoo Finance direct
 async function fetchStockData(ticker) {
     try {
         // Try Render API first (has complete financial data from yahoo-finance2)
@@ -223,27 +223,28 @@ async function fetchStockData(ticker) {
                     return renderData;
                 }
             } catch (renderError) {
-                console.warn('Render API failed, trying Yahoo Finance:', renderError.message);
+                console.warn('Render API failed, trying Yahoo Finance direct:', renderError.message);
             }
         }
         
-        // Fallback to Yahoo Finance direct method
-        if (USE_YAHOO_FINANCE_DIRECT) {
+        // Fallback to Yahoo Finance direct method (works even when Render API is blocked)
+        console.log('🔄 Trying Yahoo Finance direct method...');
+        try {
+            return await fetchYahooFinanceDirect(ticker);
+        } catch (yahooError) {
+            console.warn('Yahoo Finance direct failed, trying alternative:', yahooError.message);
             try {
-                return await fetchYahooFinanceDirect(ticker);
-            } catch (yahooError) {
-                console.warn('Yahoo Finance direct failed, trying alternative:', yahooError.message);
+                return await fetchYahooFinanceAlternative(ticker);
+            } catch (altError) {
+                console.warn('All Yahoo Finance methods failed:', altError.message);
+                // Final fallback to Alpha Vantage
                 try {
-                    return await fetchYahooFinanceAlternative(ticker);
-                } catch (altError) {
-                    console.warn('All Yahoo Finance methods failed:', altError.message);
-                    throw altError;
+                    return await fetchAlphaVantageData(ticker);
+                } catch (avError) {
+                    throw new Error('All data sources failed');
                 }
             }
         }
-        
-        // Final fallback to Alpha Vantage
-        return await fetchAlphaVantageData(ticker);
     } catch (error) {
         console.error('Error fetching stock data:', error);
         console.error(`Failed to fetch stock data for ${ticker}: ${error.message}`);
