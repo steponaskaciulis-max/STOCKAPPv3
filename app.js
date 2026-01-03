@@ -2,8 +2,13 @@
 const RENDER_API_URL = 'https://stockapp-kym2.onrender.com'; // Your Render API
 const USE_RENDER_API = false; // Disabled - Render API not available
 
-// Using Yahoo Finance via CORS proxy (no API key needed)
-const USE_YAHOO_FINANCE = true; // Primary method
+// Financial Modeling Prep API (Free tier: 250 requests/day)
+// Get your free API key at: https://site.financialmodelingprep.com/developer/docs/
+// No API key needed for basic usage, but rate limited
+const USE_FMP_API = true; // Primary method - more reliable than Yahoo Finance
+
+// Using Yahoo Finance via CORS proxy (no API key needed) - Fallback
+const USE_YAHOO_FINANCE = false; // Disabled due to 401 errors
 
 // Alpha Vantage (Free API) - Backup option
 const ALPHA_VANTAGE_API_KEY = 'demo'; // Replace with your free API key from alphavantage.co
@@ -205,10 +210,23 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Try Render API first, then fallback to Yahoo Finance
+// API Functions - Try FMP API first (most reliable for financial metrics)
 async function fetchStockData(ticker) {
     try {
-        // Try Render API first (has complete financial data)
+        // Try Financial Modeling Prep API first (has complete financial data)
+        if (USE_FMP_API) {
+            try {
+                const fmpData = await fetchFMPData(ticker);
+                if (fmpData && fmpData.pe !== 'N/A' && fmpData.pe !== undefined) {
+                    console.log('✅ FMP API succeeded for', ticker);
+                    return fmpData;
+                }
+            } catch (fmpError) {
+                console.warn('FMP API failed, trying Yahoo Finance:', fmpError.message);
+            }
+        }
+        
+        // Try Render API
         if (USE_RENDER_API) {
             try {
                 const renderData = await fetchRenderAPI(ticker);
@@ -217,7 +235,7 @@ async function fetchStockData(ticker) {
                     return renderData;
                 }
             } catch (renderError) {
-                console.warn('Render API failed, trying Yahoo Finance:', renderError.message);
+                console.warn('Render API failed:', renderError.message);
             }
         }
         
@@ -227,7 +245,6 @@ async function fetchStockData(ticker) {
                 return await fetchYahooFinanceData(ticker);
             } catch (yahooError) {
                 console.warn('Yahoo Finance failed, trying alternative method:', yahooError);
-                // Try alternative Yahoo Finance method
                 return await fetchYahooFinanceAlternative(ticker);
             }
         } else {
@@ -237,6 +254,105 @@ async function fetchStockData(ticker) {
         console.error('Error fetching stock data:', error);
         console.error(`Failed to fetch stock data for ${ticker}: ${error.message}`);
         return null;
+    }
+}
+
+// Fetch from Financial Modeling Prep API (Free tier available)
+async function fetchFMPData(ticker) {
+    try {
+        console.log('📊 Fetching from Financial Modeling Prep:', ticker);
+        
+        // Fetch profile (sector, industry)
+        const profileUrl = `https://financialmodelingprep.com/api/v3/profile/${ticker}?apikey=demo`;
+        const profileResponse = await fetch(profileUrl);
+        
+        // Fetch key metrics (P/E, PEG, EPS, etc.)
+        const metricsUrl = `https://financialmodelingprep.com/api/v3/key-metrics/${ticker}?period=annual&limit=1&apikey=demo`;
+        const metricsResponse = await fetch(metricsUrl);
+        
+        // Fetch quote (price, volume, etc.)
+        const quoteUrl = `https://financialmodelingprep.com/api/v3/quote/${ticker}?apikey=demo`;
+        const quoteResponse = await fetch(quoteUrl);
+        
+        // Fetch historical prices for chart
+        const historicalUrl = `https://financialmodelingprep.com/api/v3/historical-price-full/${ticker}?apikey=demo&from=2023-01-01`;
+        const historicalResponse = await fetch(historicalUrl);
+        
+        if (!profileResponse.ok || !quoteResponse.ok) {
+            throw new Error('FMP API request failed');
+        }
+        
+        const profileData = await profileResponse.json();
+        const quoteData = await quoteResponse.json();
+        const metricsData = metricsResponse.ok ? await metricsResponse.json() : [];
+        const historicalData = historicalResponse.ok ? await historicalResponse.json() : { historical: [] };
+        
+        if (!quoteData || quoteData.length === 0) {
+            throw new Error('Stock not found');
+        }
+        
+        const quote = quoteData[0];
+        const profile = profileData && profileData.length > 0 ? profileData[0] : {};
+        const metrics = metricsData && metricsData.length > 0 ? metricsData[0] : {};
+        const historical = historicalData.historical || [];
+        
+        const currentPrice = quote.price || 0;
+        const closes = historical.map(h => h.close).filter(Boolean).reverse();
+        const chartData = closes.length > 0 ? closes : [currentPrice];
+        
+        // Calculate changes
+        const currentIdx = chartData.length - 1;
+        const oneDayAgo = chartData[currentIdx - 1] || currentPrice;
+        const oneWeekAgo = chartData[Math.max(0, currentIdx - 5)] || currentPrice;
+        const oneMonthAgo = chartData[Math.max(0, currentIdx - 20)] || currentPrice;
+        
+        const change1D = oneDayAgo ? ((currentPrice - oneDayAgo) / oneDayAgo) * 100 : 0;
+        const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
+        const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
+        
+        const high52W = quote.yearHigh || currentPrice;
+        const low52W = quote.yearLow || currentPrice;
+        const delta52W = high52W ? ((currentPrice - high52W) / high52W) * 100 : 0;
+        
+        // Get financial metrics
+        const pe = metrics.peRatio || quote.pe || 'N/A';
+        const peg = metrics.pegRatio || 'N/A';
+        const eps = metrics.earningsPerShare || quote.eps || 'N/A';
+        const dividendYield = quote.dividendYield || 0;
+        const marketCap = quote.marketCap || 'N/A';
+        const volume = quote.volume || 0;
+        const avgVolume = quote.avgVolume || 'N/A';
+        
+        console.log('✅ FMP data fetched for', ticker);
+        console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
+        console.log('   Dividend:', dividendYield, '| Market Cap:', marketCap);
+        console.log('   Sector:', profile.sector, '| Industry:', profile.industry);
+        
+        return {
+            ticker: ticker.toUpperCase(),
+            sector: profile.sector || 'N/A',
+            industry: profile.industry || 'N/A',
+            price: parseFloat(currentPrice).toFixed(2),
+            change1D: change1D.toFixed(2),
+            change1W: change1W.toFixed(2),
+            change1M: change1M.toFixed(2),
+            pe: pe !== 'N/A' && pe !== null && pe !== undefined && pe !== 0 ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' && peg !== null && peg !== undefined && peg !== 0 ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' && eps !== null && eps !== undefined && eps !== 0 ? parseFloat(eps).toFixed(2) : 'N/A',
+            dividend: dividendYield && dividendYield !== 0 ? (parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
+            high52W: parseFloat(high52W).toFixed(2),
+            low52W: parseFloat(low52W).toFixed(2),
+            delta52W: delta52W.toFixed(2),
+            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined && marketCap !== 0 ? formatMarketCap(marketCap) : 'N/A',
+            volume: formatVolume(volume),
+            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined && avgVolume !== 0 ? formatVolume(avgVolume) : 'N/A',
+            chartData: chartData,
+            chartTimestamps: [],
+            fullChartData: chartData
+        };
+    } catch (error) {
+        console.error('FMP API error:', error);
+        throw error;
     }
 }
 
