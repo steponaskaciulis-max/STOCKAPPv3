@@ -1,5 +1,5 @@
 // API Configuration
-const RENDER_API_URL = 'https://stockapp-kym2.onrender.com'; // Your Render API
+const RENDER_API_URL = 'https://stockappv3.onrender.com'; // Your Render API
 const USE_RENDER_API = true; // Primary method - Render API (most reliable)
 
 // Using Yahoo Finance via public endpoint (no API key needed) - Fallback
