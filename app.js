@@ -2,13 +2,15 @@
 const RENDER_API_URL = 'https://stockapp-kym2.onrender.com'; // Your Render API
 const USE_RENDER_API = false; // Disabled - Render API not available
 
-// Financial Modeling Prep API (Free tier: 250 requests/day)
-// Get your free API key at: https://site.financialmodelingprep.com/developer/docs/
-// No API key needed for basic usage, but rate limited
-const USE_FMP_API = true; // Primary method - more reliable than Yahoo Finance
+// Using Yahoo Finance via public endpoint (no API key needed)
+// This uses a different method that should work more reliably
+const USE_YAHOO_FINANCE_DIRECT = true; // Primary method - direct Yahoo Finance access
 
-// Using Yahoo Finance via CORS proxy (no API key needed) - Fallback
-const USE_YAHOO_FINANCE = false; // Disabled due to 401 errors
+// Finnhub API (requires free API key)
+const USE_FINNHUB_API = false; // Disabled - requires API key
+
+// Financial Modeling Prep API (requires API key)
+const USE_FMP_API = false; // Disabled - requires API key
 
 // Alpha Vantage (Free API) - Backup option
 const ALPHA_VANTAGE_API_KEY = 'demo'; // Replace with your free API key from alphavantage.co
@@ -210,10 +212,23 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Try FMP API first (most reliable for financial metrics)
+// API Functions - Try Finnhub API first (most reliable for financial metrics)
 async function fetchStockData(ticker) {
     try {
-        // Try Financial Modeling Prep API first (has complete financial data)
+        // Try Finnhub API first (has complete financial data, free tier available)
+        if (USE_FINNHUB_API) {
+            try {
+                const finnhubData = await fetchFinnhubData(ticker);
+                if (finnhubData && finnhubData.pe !== 'N/A' && finnhubData.pe !== undefined) {
+                    console.log('✅ Finnhub API succeeded for', ticker);
+                    return finnhubData;
+                }
+            } catch (finnhubError) {
+                console.warn('Finnhub API failed, trying FMP:', finnhubError.message);
+            }
+        }
+        
+        // Try Financial Modeling Prep API (requires API key)
         if (USE_FMP_API) {
             try {
                 const fmpData = await fetchFMPData(ticker);
