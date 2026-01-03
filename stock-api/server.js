@@ -16,7 +16,12 @@ app.use(express.json());
 
 // Health check
 app.get('/', (req, res) => {
-  res.json({ message: 'Stock API is running!', endpoints: ['/stock/:ticker', '/search?q=companyname'] });
+  res.json({ 
+    message: 'Stock API is running!', 
+    version: '2.0',
+    endpoints: ['/stock/:ticker', '/search?q=companyname'],
+    status: 'active'
+  });
 });
 
 // Get stock data by ticker
