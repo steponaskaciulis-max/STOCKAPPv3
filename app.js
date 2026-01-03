@@ -212,63 +212,195 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Try Finnhub API first (most reliable for financial metrics)
+// API Functions - Use Yahoo Finance direct method
 async function fetchStockData(ticker) {
     try {
-        // Try Finnhub API first (has complete financial data, free tier available)
-        if (USE_FINNHUB_API) {
+        // Use Yahoo Finance direct method (no API key needed)
+        if (USE_YAHOO_FINANCE_DIRECT) {
             try {
-                const finnhubData = await fetchFinnhubData(ticker);
-                if (finnhubData && finnhubData.pe !== 'N/A' && finnhubData.pe !== undefined) {
-                    console.log('✅ Finnhub API succeeded for', ticker);
-                    return finnhubData;
-                }
-            } catch (finnhubError) {
-                console.warn('Finnhub API failed, trying FMP:', finnhubError.message);
-            }
-        }
-        
-        // Try Financial Modeling Prep API (requires API key)
-        if (USE_FMP_API) {
-            try {
-                const fmpData = await fetchFMPData(ticker);
-                if (fmpData && fmpData.pe !== 'N/A' && fmpData.pe !== undefined) {
-                    console.log('✅ FMP API succeeded for', ticker);
-                    return fmpData;
-                }
-            } catch (fmpError) {
-                console.warn('FMP API failed, trying Yahoo Finance:', fmpError.message);
-            }
-        }
-        
-        // Try Render API
-        if (USE_RENDER_API) {
-            try {
-                const renderData = await fetchRenderAPI(ticker);
-                if (renderData && renderData.pe !== 'N/A' && renderData.pe !== undefined) {
-                    console.log('✅ Render API succeeded for', ticker);
-                    return renderData;
-                }
-            } catch (renderError) {
-                console.warn('Render API failed:', renderError.message);
-            }
-        }
-        
-        // Fallback to Yahoo Finance
-        if (USE_YAHOO_FINANCE) {
-            try {
-                return await fetchYahooFinanceData(ticker);
+                return await fetchYahooFinanceDirect(ticker);
             } catch (yahooError) {
-                console.warn('Yahoo Finance failed, trying alternative method:', yahooError);
-                return await fetchYahooFinanceAlternative(ticker);
+                console.warn('Yahoo Finance direct failed, trying alternative:', yahooError.message);
+                // Try alternative method
+                try {
+                    return await fetchYahooFinanceAlternative(ticker);
+                } catch (altError) {
+                    console.warn('All Yahoo Finance methods failed:', altError.message);
+                    throw altError;
+                }
             }
-        } else {
-            return await fetchAlphaVantageData(ticker);
         }
+        
+        // Fallback to Alpha Vantage
+        return await fetchAlphaVantageData(ticker);
     } catch (error) {
         console.error('Error fetching stock data:', error);
         console.error(`Failed to fetch stock data for ${ticker}: ${error.message}`);
         return null;
+    }
+}
+
+// Yahoo Finance Direct - Using a working public endpoint
+async function fetchYahooFinanceDirect(ticker) {
+    try {
+        console.log('📊 Fetching from Yahoo Finance (direct):', ticker);
+        
+        // Use a different CORS proxy that works better
+        const proxies = [
+            'https://api.allorigins.win/raw?url=',
+            'https://corsproxy.io/?',
+            'https://api.codetabs.com/v1/proxy?quest='
+        ];
+        
+        // Fetch comprehensive data from quoteSummary endpoint
+        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=price,summaryProfile,financialData,defaultKeyStatistics`;
+        
+        let summaryData = null;
+        
+        // Try each proxy
+        for (const proxy of proxies) {
+            try {
+                const fullUrl = proxy + encodeURIComponent(summaryUrl);
+                const response = await fetch(fullUrl, {
+                    headers: {
+                        'Accept': 'application/json',
+                    }
+                });
+                
+                if (!response.ok) continue;
+                
+                const data = await response.json();
+                
+                // Handle different response formats
+                let parsed;
+                if (typeof data === 'string') {
+                    parsed = JSON.parse(data);
+                } else if (data.contents) {
+                    parsed = JSON.parse(data.contents);
+                } else {
+                    parsed = data;
+                }
+                
+                if (parsed.quoteSummary && parsed.quoteSummary.result && parsed.quoteSummary.result.length > 0) {
+                    summaryData = parsed.quoteSummary.result[0];
+                    console.log('✅ Summary data fetched via proxy');
+                    break;
+                }
+            } catch (err) {
+                console.log(`Proxy failed:`, err.message);
+                continue;
+            }
+        }
+        
+        // Also fetch chart data
+        const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`;
+        let chartData = null;
+        
+        for (const proxy of proxies) {
+            try {
+                const fullUrl = proxy + encodeURIComponent(chartUrl);
+                const response = await fetch(fullUrl);
+                
+                if (!response.ok) continue;
+                
+                const data = await response.json();
+                let parsed;
+                if (typeof data === 'string') {
+                    parsed = JSON.parse(data);
+                } else if (data.contents) {
+                    parsed = JSON.parse(data.contents);
+                } else {
+                    parsed = data;
+                }
+                
+                if (parsed.chart && parsed.chart.result && parsed.chart.result.length > 0) {
+                    chartData = parsed.chart.result[0];
+                    break;
+                }
+            } catch (err) {
+                continue;
+            }
+        }
+        
+        if (!summaryData && !chartData) {
+            throw new Error('Could not fetch stock data');
+        }
+        
+        // Extract data
+        const priceData = summaryData?.price || {};
+        const financialData = summaryData?.financialData || {};
+        const defaultKeyStats = summaryData?.defaultKeyStatistics || {};
+        const summaryProfile = summaryData?.summaryProfile || {};
+        const meta = chartData?.meta || {};
+        
+        // Helper to extract values
+        const getValue = (obj, key) => {
+            if (!obj || !obj[key]) return null;
+            const val = obj[key];
+            if (typeof val === 'object' && val !== null && 'raw' in val) return val.raw;
+            return val;
+        };
+        
+        const currentPrice = getValue(priceData, 'regularMarketPrice') || priceData?.regularMarketPrice || meta.regularMarketPrice || 0;
+        const closes = chartData?.indicators?.quote?.[0]?.close?.filter(v => v !== null && v !== undefined) || [currentPrice];
+        
+        // Calculate changes
+        const currentIdx = closes.length - 1;
+        const oneDayAgo = closes[currentIdx - 1] || currentPrice;
+        const oneWeekAgo = closes[Math.max(0, currentIdx - 5)] || currentPrice;
+        const oneMonthAgo = closes[Math.max(0, currentIdx - 20)] || currentPrice;
+        
+        const change1D = oneDayAgo ? ((currentPrice - oneDayAgo) / oneDayAgo) * 100 : 0;
+        const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
+        const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
+        
+        const high52W = getValue(priceData, 'fiftyTwoWeekHigh') || getValue(defaultKeyStats, 'fiftyTwoWeekHigh') || meta.fiftyTwoWeekHigh || currentPrice;
+        const low52W = getValue(priceData, 'fiftyTwoWeekLow') || getValue(defaultKeyStats, 'fiftyTwoWeekLow') || meta.fiftyTwoWeekLow || currentPrice;
+        const delta52W = high52W ? ((currentPrice - high52W) / high52W) * 100 : 0;
+        
+        // Get financial metrics
+        const pe = getValue(financialData, 'trailingPE') || getValue(defaultKeyStats, 'trailingPE') || getValue(financialData, 'forwardPE') || 'N/A';
+        const peg = getValue(financialData, 'pegRatio') || getValue(defaultKeyStats, 'pegRatio') || 'N/A';
+        const eps = getValue(financialData, 'trailingEps') || getValue(defaultKeyStats, 'trailingEps') || getValue(financialData, 'forwardEps') || 'N/A';
+        const dividendYield = getValue(financialData, 'dividendYield') || getValue(defaultKeyStats, 'dividendYield') || 0;
+        const marketCap = getValue(priceData, 'marketCap') || getValue(defaultKeyStats, 'marketCap') || 'N/A';
+        const volume = getValue(priceData, 'regularMarketVolume') || meta.regularMarketVolume || 0;
+        const avgVolume = getValue(defaultKeyStats, 'averageDailyVolume10Day') || getValue(defaultKeyStats, 'averageVolume') || 'N/A';
+        
+        const sector = summaryProfile?.sector || 'N/A';
+        const industry = summaryProfile?.industry || 'N/A';
+        
+        console.log('✅ Yahoo Finance direct data fetched for', ticker);
+        console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
+        console.log('   Dividend:', dividendYield, '| Market Cap:', marketCap);
+        console.log('   Sector:', sector, '| Industry:', industry);
+        console.log('   SummaryData available:', !!summaryData);
+        
+        return {
+            ticker: ticker.toUpperCase(),
+            sector: sector,
+            industry: industry,
+            price: parseFloat(currentPrice).toFixed(2),
+            change1D: change1D.toFixed(2),
+            change1W: change1W.toFixed(2),
+            change1M: change1M.toFixed(2),
+            pe: pe !== 'N/A' && pe !== null && pe !== undefined && pe !== 0 ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' && peg !== null && peg !== undefined && peg !== 0 ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' && eps !== null && eps !== undefined && eps !== 0 ? parseFloat(eps).toFixed(2) : 'N/A',
+            dividend: dividendYield && dividendYield !== 0 ? (parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
+            high52W: parseFloat(high52W).toFixed(2),
+            low52W: parseFloat(low52W).toFixed(2),
+            delta52W: delta52W.toFixed(2),
+            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined && marketCap !== 0 ? formatMarketCap(marketCap) : 'N/A',
+            volume: formatVolume(volume),
+            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined && avgVolume !== 0 ? formatVolume(avgVolume) : 'N/A',
+            chartData: closes,
+            chartTimestamps: [],
+            fullChartData: closes
+        };
+    } catch (error) {
+        console.error('Yahoo Finance direct error:', error);
+        throw error;
     }
 }
 
