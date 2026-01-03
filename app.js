@@ -1,17 +1,10 @@
-// API Configuration - IEX Cloud (FREE, legitimate, comprehensive data)
-// Get your FREE API key at: https://iexcloud.io/cloud-login#/register
-// Free tier: 50,000 messages per month - plenty for personal use
-// No credit card required, just sign up and get your token
-const IEX_CLOUD_TOKEN = 'pk_test_YOUR_TOKEN_HERE'; // Replace with your free token from iexcloud.io
-const USE_IEX_CLOUD = true; // Primary method - legitimate, reliable, comprehensive
-
-// Alpha Vantage (backup)
-const ALPHA_VANTAGE_API_KEY = 'demo';
-const USE_ALPHA_VANTAGE = false; // Backup only
-
-// Render API (backup - disabled)
+// API Configuration - Using Render API (no API key needed!)
+// Your Render API handles all the data fetching
 const RENDER_API_URL = 'https://stockappv3.onrender.com';
-const USE_RENDER_API = false; // Disabled - Yahoo Finance blocked
+const USE_RENDER_API = true; // Primary method - uses your Render API
+
+// Web scraping fallback (no API key needed)
+const USE_WEB_SCRAPING = true; // Fallback when Render API is rate limited
 
 // Yahoo Finance (disabled)
 const USE_YAHOO_FINANCE_DIRECT = false; // Disabled - unreliable
@@ -222,35 +215,32 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Use IEX Cloud (legitimate, comprehensive, free)
+// API Functions - Use Render API with web scraping fallback (no API keys needed!)
 async function fetchStockData(ticker) {
     try {
-        // Use IEX Cloud (legitimate, free, comprehensive financial data)
-        if (USE_IEX_CLOUD) {
+        // Try Render API first (your backend)
+        if (USE_RENDER_API) {
             try {
-                const iexData = await fetchIEXCloudData(ticker);
-                if (iexData && iexData.pe !== 'N/A' && iexData.pe !== undefined) {
-                    console.log('✅ IEX Cloud succeeded for', ticker);
-                    return iexData;
+                const renderData = await fetchRenderAPI(ticker);
+                if (renderData && renderData.pe !== 'N/A' && renderData.pe !== undefined) {
+                    console.log('✅ Render API succeeded for', ticker);
+                    return renderData;
                 }
-            } catch (iexError) {
-                console.warn('IEX Cloud failed:', iexError.message);
-                if (iexError.message.includes('pk_test') || iexError.message.includes('token')) {
-                    alert('Please get a free API token from https://iexcloud.io/cloud-login#/register and replace "pk_test_YOUR_TOKEN_HERE" in app.js');
-                }
+            } catch (renderError) {
+                console.warn('Render API failed, trying web scraping:', renderError.message);
             }
         }
         
-        // Fallback to Alpha Vantage
-        if (USE_ALPHA_VANTAGE) {
+        // Fallback to web scraping (no API key needed)
+        if (USE_WEB_SCRAPING) {
             try {
-                const avData = await fetchAlphaVantageData(ticker);
-                if (avData) {
-                    console.log('✅ Alpha Vantage succeeded for', ticker);
-                    return avData;
+                const scrapedData = await fetchStockDataViaScraping(ticker);
+                if (scrapedData) {
+                    console.log('✅ Web scraping succeeded for', ticker);
+                    return scrapedData;
                 }
-            } catch (avError) {
-                console.warn('Alpha Vantage failed:', avError.message);
+            } catch (scrapeError) {
+                console.warn('Web scraping failed:', scrapeError.message);
             }
         }
         
@@ -259,6 +249,116 @@ async function fetchStockData(ticker) {
         console.error('Error fetching stock data:', error);
         console.error(`Failed to fetch stock data for ${ticker}: ${error.message}`);
         return null;
+    }
+}
+
+// Web scraping fallback - fetches from public financial websites
+async function fetchStockDataViaScraping(ticker) {
+    try {
+        console.log('🌐 Fetching stock data via web scraping:', ticker);
+        
+        // Use a CORS proxy to fetch from Yahoo Finance HTML page
+        const proxies = [
+            'https://api.allorigins.win/raw?url=',
+            'https://corsproxy.io/?',
+            'https://api.codetabs.com/v1/proxy?quest='
+        ];
+        
+        const yahooUrl = `https://finance.yahoo.com/quote/${ticker}`;
+        let html = null;
+        
+        // Try to fetch the HTML page
+        for (const proxy of proxies) {
+            try {
+                const response = await fetch(proxy + encodeURIComponent(yahooUrl));
+                if (response.ok) {
+                    html = await response.text();
+                    break;
+                }
+            } catch (err) {
+                continue;
+            }
+        }
+        
+        if (!html) {
+            throw new Error('Could not fetch stock page');
+        }
+        
+        // Extract data from the HTML using regex (Yahoo Finance embeds JSON in the page)
+        const jsonMatch = html.match(/root\.App\.main = ({.*?});/s);
+        if (!jsonMatch) {
+            throw new Error('Could not parse stock data from page');
+        }
+        
+        const data = JSON.parse(jsonMatch[1]);
+        const quote = data?.context?.dispatcher?.stores?.QuoteSummaryStore?.quoteSummary?.result?.[0];
+        
+        if (!quote) {
+            throw new Error('Stock data not found in page');
+        }
+        
+        const price = quote.price?.regularMarketPrice?.raw || quote.price?.regularMarketPrice || 0;
+        const summary = quote.summaryProfile || {};
+        const financialData = quote.financialData || {};
+        const defaultKeyStats = quote.defaultKeyStatistics || {};
+        const priceData = quote.price || {};
+        
+        // Get financial metrics
+        const pe = financialData.trailingPE || defaultKeyStats.trailingPE || 'N/A';
+        const peg = financialData.pegRatio || defaultKeyStats.pegRatio || 'N/A';
+        const eps = financialData.trailingEps || defaultKeyStats.trailingEps || 'N/A';
+        const dividendYield = financialData.dividendYield || defaultKeyStats.dividendYield || 0;
+        const marketCap = priceData.marketCap?.raw || priceData.marketCap || defaultKeyStats.marketCap?.raw || defaultKeyStats.marketCap || 'N/A';
+        const volume = priceData.regularMarketVolume?.raw || priceData.regularMarketVolume || 0;
+        const avgVolume = defaultKeyStats.averageDailyVolume10Day?.raw || defaultKeyStats.averageDailyVolume10Day || 'N/A';
+        const high52W = priceData.fiftyTwoWeekHigh?.raw || priceData.fiftyTwoWeekHigh || defaultKeyStats.fiftyTwoWeekHigh?.raw || defaultKeyStats.fiftyTwoWeekHigh || price;
+        const low52W = priceData.fiftyTwoWeekLow?.raw || priceData.fiftyTwoWeekLow || defaultKeyStats.fiftyTwoWeekLow?.raw || defaultKeyStats.fiftyTwoWeekLow || price;
+        
+        // Get historical data for chart and changes
+        const historicalData = quote.historicalData || [];
+        const closes = historicalData.map(d => d.close).filter(Boolean);
+        const chartData = closes.length > 0 ? closes : [price];
+        
+        // Calculate changes
+        const currentIdx = chartData.length - 1;
+        const oneDayAgo = chartData[currentIdx - 1] || price;
+        const oneWeekAgo = chartData[Math.max(0, currentIdx - 5)] || price;
+        const oneMonthAgo = chartData[Math.max(0, currentIdx - 20)] || price;
+        
+        const change1D = oneDayAgo ? ((price - oneDayAgo) / oneDayAgo) * 100 : 0;
+        const change1W = oneWeekAgo ? ((price - oneWeekAgo) / oneWeekAgo) * 100 : 0;
+        const change1M = oneMonthAgo ? ((price - oneMonthAgo) / oneMonthAgo) * 100 : 0;
+        const delta52W = high52W ? ((price - high52W) / high52W) * 100 : 0;
+        
+        console.log('✅ Web scraping data fetched for', ticker);
+        console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
+        console.log('   Sector:', summary.sector, '| Industry:', summary.industry);
+        
+        return {
+            ticker: ticker.toUpperCase(),
+            sector: summary.sector || 'N/A',
+            industry: summary.industry || 'N/A',
+            price: parseFloat(price).toFixed(2),
+            change1D: change1D.toFixed(2),
+            change1W: change1W.toFixed(2),
+            change1M: change1M.toFixed(2),
+            pe: pe !== 'N/A' && pe !== null && pe !== undefined && pe !== 0 ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' && peg !== null && peg !== undefined && peg !== 0 ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' && eps !== null && eps !== undefined && eps !== 0 ? parseFloat(eps).toFixed(2) : 'N/A',
+            dividend: dividendYield && dividendYield !== 0 ? (parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
+            high52W: parseFloat(high52W).toFixed(2),
+            low52W: parseFloat(low52W).toFixed(2),
+            delta52W: delta52W.toFixed(2),
+            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined && marketCap !== 0 ? formatMarketCap(marketCap) : 'N/A',
+            volume: formatVolume(volume),
+            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined && avgVolume !== 0 ? formatVolume(avgVolume) : 'N/A',
+            chartData: chartData,
+            chartTimestamps: [],
+            fullChartData: chartData
+        };
+    } catch (error) {
+        console.error('Web scraping error:', error);
+        throw error;
     }
 }
 
