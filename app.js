@@ -1,15 +1,13 @@
-// API Configuration - Using Alpha Vantage (Free API)
-// Get your free API key at: https://www.alphavantage.co/support/#api-key
-const ALPHA_VANTAGE_API_KEY = 'demo'; // Replace with your free API key from alphavantage.co
-const API_BASE_URL = 'https://www.alphavantage.co/query';
+// API Configuration
+const RENDER_API_URL = 'https://stockapp-kym2.onrender.com'; // Your Render API
+const USE_RENDER_API = true; // Try Render API first (has complete financial data)
 
 // Alternative: Using Yahoo Finance via CORS proxy (no API key needed)
-const USE_YAHOO_FINANCE = true; // Set to false to use Alpha Vantage
+const USE_YAHOO_FINANCE = true; // Fallback to Yahoo Finance if Render API fails
 
-// Financial Modeling Prep API (Free tier: 250 requests/day)
-// Get your free API key at: https://site.financialmodelingprep.com/developer/docs/
-const FMP_API_KEY = 'demo'; // Replace with your free API key from financialmodelingprep.com
-const USE_FMP_FALLBACK = true; // Use FMP as fallback when Yahoo Finance fails
+// Alpha Vantage (Free API) - Backup option
+const ALPHA_VANTAGE_API_KEY = 'demo'; // Replace with your free API key from alphavantage.co
+const API_BASE_URL = 'https://www.alphavantage.co/query';
 
 // State Management
 let watchlists = JSON.parse(localStorage.getItem('watchlists')) || [];
@@ -207,9 +205,23 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Using Yahoo Finance (Free, no API key needed)
+// API Functions - Try Render API first, then fallback to Yahoo Finance
 async function fetchStockData(ticker) {
     try {
+        // Try Render API first (has complete financial data)
+        if (USE_RENDER_API) {
+            try {
+                const renderData = await fetchRenderAPI(ticker);
+                if (renderData && renderData.pe !== 'N/A' && renderData.pe !== undefined) {
+                    console.log('✅ Render API succeeded for', ticker);
+                    return renderData;
+                }
+            } catch (renderError) {
+                console.warn('Render API failed, trying Yahoo Finance:', renderError.message);
+            }
+        }
+        
+        // Fallback to Yahoo Finance
         if (USE_YAHOO_FINANCE) {
             try {
                 return await fetchYahooFinanceData(ticker);
@@ -223,9 +235,75 @@ async function fetchStockData(ticker) {
         }
     } catch (error) {
         console.error('Error fetching stock data:', error);
-        // Don't show alert on every failure, just log it
         console.error(`Failed to fetch stock data for ${ticker}: ${error.message}`);
         return null;
+    }
+}
+
+// Fetch from Render API (your backend)
+async function fetchRenderAPI(ticker) {
+    try {
+        console.log('📡 Fetching from Render API:', ticker);
+        const response = await fetch(`${RENDER_API_URL}/stock/${ticker}`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        // Transform Render API response to match our format
+        const currentPrice = data.price || data.regularMarketPrice || 0;
+        const chartData = data.chartData || [currentPrice];
+        
+        // Calculate changes if not provided
+        let change1D = parseFloat(data.change1D) || 0;
+        let change1W = parseFloat(data.change1W) || 0;
+        let change1M = parseFloat(data.change1M) || 0;
+        
+        if (chartData.length > 1) {
+            const currentIdx = chartData.length - 1;
+            const oneDayAgo = chartData[currentIdx - 1] || currentPrice;
+            const oneWeekAgo = chartData[Math.max(0, currentIdx - 5)] || currentPrice;
+            const oneMonthAgo = chartData[Math.max(0, currentIdx - 20)] || currentPrice;
+            
+            if (!change1D && oneDayAgo) change1D = ((currentPrice - oneDayAgo) / oneDayAgo) * 100;
+            if (!change1W && oneWeekAgo) change1W = ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100;
+            if (!change1M && oneMonthAgo) change1M = ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100;
+        }
+        
+        const high52W = parseFloat(data.fiftyTwoWeekHigh) || currentPrice;
+        const delta52W = high52W ? ((currentPrice - high52W) / high52W) * 100 : 0;
+        
+        return {
+            ticker: data.symbol || ticker.toUpperCase(),
+            sector: data.sector || 'N/A',
+            industry: 'N/A',
+            price: parseFloat(currentPrice).toFixed(2),
+            change1D: change1D.toFixed(2),
+            change1W: change1W.toFixed(2),
+            change1M: change1M.toFixed(2),
+            pe: data.trailingPE || data.peRatio || 'N/A',
+            peg: data.pegRatio || 'N/A',
+            eps: data.trailingEps || data.eps || 'N/A',
+            dividend: data.dividendYield || data.dividendRate || '0.00',
+            high52W: high52W.toFixed(2),
+            low52W: (parseFloat(data.fiftyTwoWeekLow) || currentPrice).toFixed(2),
+            delta52W: delta52W.toFixed(2),
+            marketCap: data.marketCap ? formatMarketCap(data.marketCap) : 'N/A',
+            volume: formatVolume(data.regularMarketVolume || 0),
+            avgVolume: 'N/A',
+            chartData: chartData,
+            chartTimestamps: [],
+            fullChartData: chartData
+        };
+    } catch (error) {
+        console.error('Render API error:', error);
+        throw error;
     }
 }
 
