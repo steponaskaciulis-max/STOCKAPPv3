@@ -6,6 +6,11 @@ const API_BASE_URL = 'https://www.alphavantage.co/query';
 // Alternative: Using Yahoo Finance via CORS proxy (no API key needed)
 const USE_YAHOO_FINANCE = true; // Set to false to use Alpha Vantage
 
+// Financial Modeling Prep API (Free tier: 250 requests/day)
+// Get your free API key at: https://site.financialmodelingprep.com/developer/docs/
+const FMP_API_KEY = 'demo'; // Replace with your free API key from financialmodelingprep.com
+const USE_FMP_FALLBACK = true; // Use FMP as fallback when Yahoo Finance fails
+
 // State Management
 let watchlists = JSON.parse(localStorage.getItem('watchlists')) || [];
 let currentWatchlistId = null;
@@ -206,14 +211,115 @@ async function searchByCompanyName() {
 async function fetchStockData(ticker) {
     try {
         if (USE_YAHOO_FINANCE) {
-            return await fetchYahooFinanceData(ticker);
+            try {
+                return await fetchYahooFinanceData(ticker);
+            } catch (yahooError) {
+                console.warn('Yahoo Finance failed, trying alternative method:', yahooError);
+                // Try alternative Yahoo Finance method
+                return await fetchYahooFinanceAlternative(ticker);
+            }
         } else {
             return await fetchAlphaVantageData(ticker);
         }
     } catch (error) {
         console.error('Error fetching stock data:', error);
-        alert(`Error fetching stock data for ${ticker}: ${error.message}`);
+        // Don't show alert on every failure, just log it
+        console.error(`Failed to fetch stock data for ${ticker}: ${error.message}`);
         return null;
+    }
+}
+
+// Alternative Yahoo Finance method using different endpoint
+async function fetchYahooFinanceAlternative(ticker) {
+    try {
+        console.log('🔄 Trying alternative Yahoo Finance method for:', ticker);
+        
+        // Use a simpler, more reliable endpoint
+        const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=price,summaryProfile,financialData,defaultKeyStatistics`;
+        const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
+        
+        const response = await fetch(proxyUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        const parsed = data.contents ? JSON.parse(data.contents) : data;
+        
+        if (!parsed.quoteSummary || !parsed.quoteSummary.result || parsed.quoteSummary.result.length === 0) {
+            throw new Error('No data returned');
+        }
+        
+        const result = parsed.quoteSummary.result[0];
+        const priceData = result.price || {};
+        const financialData = result.financialData || {};
+        const keyStats = result.defaultKeyStatistics || {};
+        const profile = result.summaryProfile || {};
+        
+        const currentPrice = priceData.regularMarketPrice?.raw || priceData.regularMarketPrice || 0;
+        
+        // Get all metrics
+        const pe = financialData.trailingPE || keyStats.trailingPE || financialData.forwardPE || 'N/A';
+        const peg = financialData.pegRatio || keyStats.pegRatio || 'N/A';
+        const eps = financialData.trailingEps || keyStats.trailingEps || financialData.forwardEps || 'N/A';
+        const dividendYield = financialData.dividendYield || keyStats.dividendYield || 0;
+        const marketCap = priceData.marketCap?.raw || priceData.marketCap || keyStats.marketCap?.raw || keyStats.marketCap || 'N/A';
+        const volume = priceData.regularMarketVolume?.raw || priceData.regularMarketVolume || 0;
+        const avgVolume = keyStats.averageDailyVolume10Day?.raw || keyStats.averageDailyVolume10Day || 'N/A';
+        const high52W = priceData.fiftyTwoWeekHigh?.raw || priceData.fiftyTwoWeekHigh || keyStats.fiftyTwoWeekHigh?.raw || keyStats.fiftyTwoWeekHigh || currentPrice;
+        const low52W = priceData.fiftyTwoWeekLow?.raw || priceData.fiftyTwoWeekLow || keyStats.fiftyTwoWeekLow?.raw || keyStats.fiftyTwoWeekLow || currentPrice;
+        
+        // For chart data, we still need to fetch from chart endpoint
+        const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`;
+        const chartProxy = 'https://api.allorigins.win/get?url=' + encodeURIComponent(chartUrl);
+        const chartResponse = await fetch(chartProxy);
+        let closes = [currentPrice];
+        
+        if (chartResponse.ok) {
+            const chartData = await chartResponse.json();
+            const chartParsed = chartData.contents ? JSON.parse(chartData.contents) : chartData;
+            if (chartParsed.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
+                closes = chartParsed.chart.result[0].indicators.quote[0].close.filter(v => v !== null && v !== undefined);
+            }
+        }
+        
+        // Calculate changes
+        const currentIdx = closes.length - 1;
+        const oneDayAgo = closes[currentIdx - 1] || currentPrice;
+        const oneWeekAgo = closes[Math.max(0, currentIdx - 5)] || currentPrice;
+        const oneMonthAgo = closes[Math.max(0, currentIdx - 20)] || currentPrice;
+        
+        const change1D = oneDayAgo ? ((currentPrice - oneDayAgo) / oneDayAgo) * 100 : 0;
+        const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
+        const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
+        const delta52W = high52W ? ((currentPrice - high52W) / high52W) * 100 : 0;
+        
+        console.log('✅ Alternative method succeeded for', ticker);
+        console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
+        
+        return {
+            ticker: ticker.toUpperCase(),
+            sector: profile.sector || 'N/A',
+            industry: profile.industry || 'N/A',
+            price: parseFloat(currentPrice).toFixed(2),
+            change1D: change1D.toFixed(2),
+            change1W: change1W.toFixed(2),
+            change1M: change1M.toFixed(2),
+            pe: pe !== 'N/A' && pe !== null && pe !== undefined && pe !== 0 ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' && peg !== null && peg !== undefined && peg !== 0 ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' && eps !== null && eps !== undefined && eps !== 0 ? parseFloat(eps).toFixed(2) : 'N/A',
+            dividend: dividendYield && dividendYield !== 0 ? (parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
+            high52W: parseFloat(high52W).toFixed(2),
+            low52W: parseFloat(low52W).toFixed(2),
+            delta52W: delta52W.toFixed(2),
+            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined && marketCap !== 0 ? formatMarketCap(marketCap) : 'N/A',
+            volume: formatVolume(volume),
+            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined && avgVolume !== 0 ? formatVolume(avgVolume) : 'N/A',
+            chartData: closes,
+            chartTimestamps: [],
+            fullChartData: closes
+        };
+    } catch (error) {
+        console.error('Alternative Yahoo Finance method failed:', error);
+        throw error;
     }
 }
 
@@ -228,10 +334,10 @@ async function fetchYahooFinanceData(ticker) {
         
         console.log('📊 Fetching COMPLETE stock data from Yahoo Finance:', ticker);
         
-        // Use comprehensive summary endpoint that includes all financial metrics
-        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=summaryProfile,financialData,defaultKeyStatistics,calendarEvents`;
+        // Use comprehensive endpoints
         const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y&includePrePost=false`;
-        const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ticker}`;
+        const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ticker}&fields=symbol,regularMarketPrice,regularMarketChangePercent,regularMarketVolume,averageDailyVolume10Day,marketCap,trailingPE,forwardPE,pegRatio,trailingEps,forwardEps,dividendYield,fiftyTwoWeekHigh,fiftyTwoWeekLow,sector,industry,longName,shortName`;
+        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=summaryProfile,financialData,defaultKeyStatistics`;
         
         let chartData = null;
         let quoteData = null;
@@ -265,7 +371,7 @@ async function fetchYahooFinanceData(ticker) {
             }
         }
         
-        // Fetch quote data for additional metrics
+        // Fetch quote data with explicit fields
         for (const proxyUrl of proxies) {
             try {
                 const fullUrl = proxyUrl + encodeURIComponent(quoteUrl);
@@ -285,7 +391,8 @@ async function fetchYahooFinanceData(ticker) {
                 
                 if (parsed.quoteResponse && parsed.quoteResponse.result && parsed.quoteResponse.result.length > 0) {
                     quoteData = parsed.quoteResponse.result[0];
-                    console.log('✅ Quote data fetched:', Object.keys(quoteData));
+                    console.log('✅ Quote data fetched. Keys:', Object.keys(quoteData));
+                    console.log('   P/E:', quoteData.trailingPE, '| PEG:', quoteData.pegRatio, '| EPS:', quoteData.trailingEps);
                     break;
                 }
             } catch (err) {
@@ -315,6 +422,9 @@ async function fetchYahooFinanceData(ticker) {
                 if (parsed.quoteSummary && parsed.quoteSummary.result && parsed.quoteSummary.result.length > 0) {
                     summaryData = parsed.quoteSummary.result[0];
                     console.log('✅ Summary data fetched');
+                    if (summaryData.financialData) {
+                        console.log('   Financial Data:', Object.keys(summaryData.financialData));
+                    }
                     break;
                 }
             } catch (err) {
@@ -351,33 +461,44 @@ async function fetchYahooFinanceData(ticker) {
         const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
         const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
         
-        // Get comprehensive data from all sources (prioritize summary, then quote, then meta)
+        // Get comprehensive data from all sources (prioritize quote, then summary, then meta)
         const financialData = summaryData?.financialData || {};
         const defaultKeyStats = summaryData?.defaultKeyStatistics || {};
         const summaryProfile = summaryData?.summaryProfile || {};
         
-        const fiftyTwoWeekHigh = meta.fiftyTwoWeekHigh || quoteData?.fiftyTwoWeekHigh || defaultKeyStats?.fiftyTwoWeekHigh || currentPrice;
-        const fiftyTwoWeekLow = meta.fiftyTwoWeekLow || quoteData?.fiftyTwoWeekLow || defaultKeyStats?.fiftyTwoWeekLow || currentPrice;
+        // Prioritize quoteData as it's most reliable
+        const fiftyTwoWeekHigh = quoteData?.fiftyTwoWeekHigh || meta.fiftyTwoWeekHigh || defaultKeyStats?.fiftyTwoWeekHigh || currentPrice;
+        const fiftyTwoWeekLow = quoteData?.fiftyTwoWeekLow || meta.fiftyTwoWeekLow || defaultKeyStats?.fiftyTwoWeekLow || currentPrice;
         const delta52W = fiftyTwoWeekHigh ? ((currentPrice - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100 : 0;
         
-        // Get financial metrics with multiple fallbacks
-        const pe = financialData?.trailingPE || quoteData?.trailingPE || meta.trailingPE || defaultKeyStats?.trailingPE || quoteData?.forwardPE || 'N/A';
-        const peg = financialData?.pegRatio || quoteData?.pegRatio || meta.pegRatio || defaultKeyStats?.pegRatio || 'N/A';
-        const eps = financialData?.trailingEps || quoteData?.trailingEps || meta.trailingEps || defaultKeyStats?.trailingEps || quoteData?.forwardEps || 'N/A';
-        const dividendYield = financialData?.dividendYield || quoteData?.dividendYield || meta.dividendYield || defaultKeyStats?.dividendYield || 0;
-        const marketCap = quoteData?.marketCap || meta.marketCap || defaultKeyStats?.marketCap || 'N/A';
-        const volume = quoteData?.regularMarketVolume || meta.regularMarketVolume || 0;
-        const avgVolume = quoteData?.averageDailyVolume10Day || quoteData?.averageVolume || defaultKeyStats?.averageDailyVolume10Day || 'N/A';
+        // Get financial metrics - prioritize quoteData (most reliable), then summary, then meta
+        // Handle both raw number format and object format from Yahoo Finance
+        const getValue = (obj, key) => {
+            if (!obj) return null;
+            const val = obj[key];
+            if (val === null || val === undefined) return null;
+            if (typeof val === 'object' && val.raw !== undefined) return val.raw;
+            return val;
+        };
+        
+        const pe = getValue(quoteData, 'trailingPE') || getValue(financialData, 'trailingPE') || getValue(defaultKeyStats, 'trailingPE') || meta.trailingPE || getValue(quoteData, 'forwardPE') || 'N/A';
+        const peg = getValue(quoteData, 'pegRatio') || getValue(financialData, 'pegRatio') || getValue(defaultKeyStats, 'pegRatio') || meta.pegRatio || 'N/A';
+        const eps = getValue(quoteData, 'trailingEps') || getValue(financialData, 'trailingEps') || getValue(defaultKeyStats, 'trailingEps') || meta.trailingEps || getValue(quoteData, 'forwardEps') || 'N/A';
+        const dividendYield = getValue(quoteData, 'dividendYield') || getValue(financialData, 'dividendYield') || getValue(defaultKeyStats, 'dividendYield') || meta.dividendYield || 0;
+        const marketCap = getValue(quoteData, 'marketCap') || getValue(defaultKeyStats, 'marketCap') || meta.marketCap || 'N/A';
+        const volume = getValue(quoteData, 'regularMarketVolume') || meta.regularMarketVolume || 0;
+        const avgVolume = getValue(quoteData, 'averageDailyVolume10Day') || getValue(quoteData, 'averageVolume') || getValue(defaultKeyStats, 'averageDailyVolume10Day') || 'N/A';
         
         // Get sector and industry
-        const sector = summaryProfile?.sector || quoteData?.sector || meta.sector || quoteData?.industry || meta.industry || 'N/A';
-        const industry = summaryProfile?.industry || quoteData?.industry || meta.industry || 'N/A';
+        const sector = quoteData?.sector || summaryProfile?.sector || meta.sector || 'N/A';
+        const industry = quoteData?.industry || summaryProfile?.industry || meta.industry || 'N/A';
         
-        console.log('✅ Successfully fetched COMPLETE data for', ticker);
+        console.log('✅ Final data for', ticker);
         console.log('   Price:', currentPrice);
         console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
         console.log('   Dividend:', dividendYield, '| Market Cap:', marketCap);
         console.log('   Sector:', sector, '| Industry:', industry);
+        console.log('   QuoteData available:', !!quoteData, '| SummaryData available:', !!summaryData);
         
         return {
             ticker: meta.symbol || ticker,
@@ -387,16 +508,16 @@ async function fetchYahooFinanceData(ticker) {
             change1D: change1D.toFixed(2),
             change1W: change1W.toFixed(2),
             change1M: change1M.toFixed(2),
-            pe: pe !== 'N/A' && pe !== null && pe !== undefined ? parseFloat(pe).toFixed(2) : 'N/A',
-            peg: peg !== 'N/A' && peg !== null && peg !== undefined ? parseFloat(peg).toFixed(2) : 'N/A',
-            eps: eps !== 'N/A' && eps !== null && eps !== undefined ? parseFloat(eps).toFixed(2) : 'N/A',
+            pe: pe !== 'N/A' && pe !== null && pe !== undefined && pe !== 0 ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' && peg !== null && peg !== undefined && peg !== 0 ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' && eps !== null && eps !== undefined && eps !== 0 ? parseFloat(eps).toFixed(2) : 'N/A',
             dividend: dividendYield && dividendYield !== 0 ? (parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
             high52W: parseFloat(fiftyTwoWeekHigh).toFixed(2),
             low52W: parseFloat(fiftyTwoWeekLow).toFixed(2),
             delta52W: delta52W.toFixed(2),
-            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined ? formatMarketCap(marketCap) : 'N/A',
+            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined && marketCap !== 0 ? formatMarketCap(marketCap) : 'N/A',
             volume: formatVolume(volume),
-            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined ? formatVolume(avgVolume) : 'N/A',
+            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined && avgVolume !== 0 ? formatVolume(avgVolume) : 'N/A',
             chartData: closes, // Full year of data
             chartTimestamps: chartData.timestamp || [],
             fullChartData: closes // Store full data for all timeframes
