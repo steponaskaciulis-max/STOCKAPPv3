@@ -220,34 +220,32 @@ async function fetchStockData(ticker) {
     }
 }
 
-// Direct method - Simple, working solution using Yahoo Finance quote endpoint
+// Direct method - Fetches from Yahoo Finance using quoteSummary for complete data
 async function fetchStockDataDirect(ticker) {
     try {
-        console.log('📊 Fetching stock data directly:', ticker);
+        console.log('📊 Fetching COMPLETE stock data:', ticker);
         
-        // Use multiple CORS proxies for reliability
         const proxies = [
             'https://api.allorigins.win/raw?url=',
             'https://corsproxy.io/?',
             'https://api.codetabs.com/v1/proxy?quest='
         ];
         
-        let quote = null;
-        let chartData = null;
+        // Fetch quoteSummary (has ALL financial data)
+        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=price,summaryProfile,financialData,defaultKeyStatistics`;
+        let summaryData = null;
         
-        // Fetch quote data (has P/E, PEG, EPS, etc.)
         for (const proxy of proxies) {
             try {
-                const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ticker}`;
-                const response = await fetch(proxy + encodeURIComponent(quoteUrl));
+                const response = await fetch(proxy + encodeURIComponent(summaryUrl));
                 if (!response.ok) continue;
                 
                 const data = await response.json();
                 const parsed = data.contents ? JSON.parse(data.contents) : data;
                 
-                if (parsed.quoteResponse?.result?.[0]) {
-                    quote = parsed.quoteResponse.result[0];
-                    console.log('✅ Quote data fetched');
+                if (parsed.quoteSummary?.result?.[0]) {
+                    summaryData = parsed.quoteSummary.result[0];
+                    console.log('✅ Summary data fetched');
                     break;
                 }
             } catch (err) {
@@ -255,22 +253,20 @@ async function fetchStockDataDirect(ticker) {
             }
         }
         
-        if (!quote) {
-            throw new Error('Could not fetch quote data');
-        }
-        
         // Fetch chart data
+        const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`;
+        let chartResult = null;
+        
         for (const proxy of proxies) {
             try {
-                const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`;
                 const response = await fetch(proxy + encodeURIComponent(chartUrl));
                 if (!response.ok) continue;
                 
                 const data = await response.json();
                 const parsed = data.contents ? JSON.parse(data.contents) : data;
                 
-                if (parsed.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
-                    chartData = parsed.chart.result[0].indicators.quote[0].close.filter(v => v !== null && v !== undefined);
+                if (parsed.chart?.result?.[0]) {
+                    chartResult = parsed.chart.result[0];
                     break;
                 }
             } catch (err) {
@@ -278,8 +274,26 @@ async function fetchStockDataDirect(ticker) {
             }
         }
         
-        const currentPrice = quote.regularMarketPrice || quote.price || 0;
-        const closes = chartData || [currentPrice];
+        if (!summaryData && !chartResult) {
+            throw new Error('Could not fetch stock data');
+        }
+        
+        // Extract all data
+        const priceData = summaryData?.price || {};
+        const financialData = summaryData?.financialData || {};
+        const defaultKeyStats = summaryData?.defaultKeyStatistics || {};
+        const summaryProfile = summaryData?.summaryProfile || {};
+        const meta = chartResult?.meta || {};
+        
+        // Helper to get values (handles raw format)
+        const getVal = (obj, key) => {
+            if (!obj || !obj[key]) return null;
+            const val = obj[key];
+            return (typeof val === 'object' && val !== null && 'raw' in val) ? val.raw : val;
+        };
+        
+        const currentPrice = getVal(priceData, 'regularMarketPrice') || priceData?.regularMarketPrice || meta.regularMarketPrice || 0;
+        const closes = chartResult?.indicators?.quote?.[0]?.close?.filter(v => v !== null && v !== undefined) || [currentPrice];
         
         // Calculate changes
         const currentIdx = closes.length - 1;
@@ -291,25 +305,25 @@ async function fetchStockDataDirect(ticker) {
         const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
         const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
         
-        const high52W = quote.fiftyTwoWeekHigh || Math.max(...closes) || currentPrice;
-        const low52W = quote.fiftyTwoWeekLow || Math.min(...closes) || currentPrice;
+        const high52W = getVal(priceData, 'fiftyTwoWeekHigh') || getVal(defaultKeyStats, 'fiftyTwoWeekHigh') || meta.fiftyTwoWeekHigh || Math.max(...closes) || currentPrice;
+        const low52W = getVal(priceData, 'fiftyTwoWeekLow') || getVal(defaultKeyStats, 'fiftyTwoWeekLow') || meta.fiftyTwoWeekLow || Math.min(...closes) || currentPrice;
         const delta52W = high52W ? ((currentPrice - high52W) / high52W) * 100 : 0;
         
-        // Get ALL financial metrics from quote
-        const pe = quote.trailingPE || quote.forwardPE || 'N/A';
-        const peg = quote.pegRatio || 'N/A';
-        const eps = quote.trailingEps || quote.forwardEps || 'N/A';
-        const dividendYield = quote.dividendYield || 0;
-        const marketCap = quote.marketCap || 'N/A';
-        const volume = quote.regularMarketVolume || 0;
-        const avgVolume = quote.averageDailyVolume10Day || quote.averageVolume || 'N/A';
-        const sector = quote.sector || 'N/A';
-        const industry = quote.industry || 'N/A';
+        // Get ALL financial metrics
+        const pe = getVal(financialData, 'trailingPE') || getVal(defaultKeyStats, 'trailingPE') || getVal(financialData, 'forwardPE') || 'N/A';
+        const peg = getVal(financialData, 'pegRatio') || getVal(defaultKeyStats, 'pegRatio') || 'N/A';
+        const eps = getVal(financialData, 'trailingEps') || getVal(defaultKeyStats, 'trailingEps') || getVal(financialData, 'forwardEps') || 'N/A';
+        const dividendYield = getVal(financialData, 'dividendYield') || getVal(defaultKeyStats, 'dividendYield') || 0;
+        const marketCap = getVal(priceData, 'marketCap') || getVal(defaultKeyStats, 'marketCap') || 'N/A';
+        const volume = getVal(priceData, 'regularMarketVolume') || meta.regularMarketVolume || 0;
+        const avgVolume = getVal(defaultKeyStats, 'averageDailyVolume10Day') || getVal(defaultKeyStats, 'averageVolume') || 'N/A';
+        const sector = summaryProfile?.sector || 'N/A';
+        const industry = summaryProfile?.industry || 'N/A';
         
-        console.log('✅ Direct data fetched for', ticker);
+        console.log('✅ COMPLETE data fetched for', ticker);
         console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
+        console.log('   Dividend:', dividendYield, '| Market Cap:', marketCap);
         console.log('   Sector:', sector, '| Industry:', industry);
-        console.log('   Market Cap:', marketCap, '| Volume:', volume);
         
         return {
             ticker: ticker.toUpperCase(),
