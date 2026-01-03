@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Watch - Your Personal Stock Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <h1 class="logo">📈 Stock Watch</h1>
+            <div class="nav-links">
+                <button class="nav-btn active" data-page="home">Home</button>
+                <button class="nav-btn" data-page="watchlists">Watchlists</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Homepage -->
+    <div id="home-page" class="page active">
+        <div class="home-container">
+            <div class="hero-section">
+                <h1 class="hero-title">Welcome to Stock Watch</h1>
+                <p class="hero-subtitle">Track your favorite stocks and build personalized watchlists</p>
+                <div class="hero-features">
+                    <div class="feature-card">
+                        <div class="feature-icon">📊</div>
+                        <h3>Real-time Data</h3>
+                        <p>Get up-to-date stock prices and metrics</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">📈</div>
+                        <h3>Interactive Charts</h3>
+                        <p>Explore detailed stock charts and trends</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⭐</div>
+                        <h3>Custom Watchlists</h3>
+                        <p>Organize stocks the way you want</p>
+                    </div>
+                </div>
+                <button class="cta-button" onclick="switchPage('watchlists')">Get Started</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Watchlists Page -->
+    <div id="watchlists-page" class="page">
+        <div class="watchlists-container">
+            <div class="watchlists-header">
+                <h2>My Watchlists</h2>
+                <button class="create-btn" onclick="showCreateWatchlistModal()">+ Create Watchlist</button>
+            </div>
+            <div id="watchlists-grid" class="watchlists-grid">
+                <!-- Watchlist cards will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Watchlist Detail Page -->
+    <div id="watchlist-detail-page" class="page">
+        <div class="watchlist-detail-container">
+            <div class="detail-header">
+                <button class="back-btn" onclick="goBackToWatchlists()">← Back</button>
+                <h2 id="watchlist-detail-title">Watchlist</h2>
+                <button class="refresh-btn" onclick="refreshAllStocks()" style="margin-left: auto; padding: 0.75rem 1.5rem; background: #2ecc71; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">🔄 Refresh All Stocks</button>
+            </div>
+            <div class="search-section">
+                <div class="search-container">
+                    <input type="text" id="stock-search" placeholder="Search by ticker (e.g., AAPL, MSFT)" class="search-input">
+                    <button class="search-btn" onclick="searchStock()">Search</button>
+                </div>
+                <div class="search-container">
+                    <input type="text" id="company-search" placeholder="Search by company name" class="search-input">
+                    <button class="search-btn" onclick="searchByCompanyName()">Find Ticker</button>
+                </div>
+            </div>
+            <div id="stock-table-container" class="stock-table-container">
+                <table class="stock-table">
+                    <thead>
+                        <tr>
+                            <th>Ticker</th>
+                            <th>Sector</th>
+                            <th>Price</th>
+                            <th>1D%</th>
+                            <th>1W%</th>
+                            <th>1M%</th>
+                            <th>P/E</th>
+                            <th>PEG</th>
+                            <th>EPS</th>
+                            <th>DIV %</th>
+                            <th>52W High</th>
+                            <th>Δ from 52W</th>
+                            <th>Chart</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stock-table-body">
+                        <!-- Stock rows will be dynamically added here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stock Detail Page -->
+    <div id="stock-detail-page" class="page">
+        <div class="stock-detail-container">
+            <button class="back-btn" onclick="goBackToWatchlist()">← Back</button>
+            <div id="stock-detail-content">
+                <!-- Stock detail content will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Watchlist Modal -->
+    <div id="create-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeCreateModal()">&times;</span>
+            <h2>Create New Watchlist</h2>
+            <input type="text" id="watchlist-name-input" placeholder="Enter watchlist name" class="modal-input">
+            <div class="modal-buttons">
+                <button class="modal-btn primary" onclick="createWatchlist()">Create</button>
+                <button class="modal-btn secondary" onclick="closeCreateModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Stock Modal -->
+    <div id="add-stock-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeAddStockModal()">&times;</span>
+            <h2>Add Stock</h2>
+            <div id="add-stock-content">
+                <!-- Stock search results will be shown here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
