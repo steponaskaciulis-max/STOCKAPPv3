@@ -1011,9 +1011,10 @@ function formatVolume(value) {
 }
 
 // Alpha Vantage API (requires free API key)
+// Alpha Vantage API (backup - limited data)
 async function fetchAlphaVantageData(ticker) {
     try {
-        const url = `${API_BASE_URL}?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${ALPHA_VANTAGE_API_KEY}`;
+        const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${ALPHA_VANTAGE_API_KEY}`;
         const response = await fetch(url);
         const data = await response.json();
         
