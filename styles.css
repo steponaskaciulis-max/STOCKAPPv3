@@ -434,6 +434,35 @@ body {
     height: 400px;
 }
 
+.timeframe-selector {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.timeframe-btn {
+    padding: 0.5rem 1rem;
+    background: white;
+    border: 2px solid #e0e0e0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #666;
+    transition: all 0.3s;
+}
+
+.timeframe-btn:hover {
+    background: #f0f0f0;
+    border-color: #667eea;
+}
+
+.timeframe-btn.active {
+    background: #667eea;
+    color: white;
+    border-color: #667eea;
+}
+
 .stock-metrics-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

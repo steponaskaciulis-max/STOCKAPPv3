@@ -217,121 +217,172 @@ async function fetchStockData(ticker) {
     }
 }
 
-// Yahoo Finance API (via CORS proxy) - IMPROVED VERSION
+// Yahoo Finance API (via CORS proxy) - ENHANCED VERSION with Complete Data
 async function fetchYahooFinanceData(ticker) {
     try {
-        // Try multiple CORS proxies for reliability
         const proxies = [
             'https://api.allorigins.win/get?url=',
             'https://corsproxy.io/?',
             'https://api.codetabs.com/v1/proxy?quest='
         ];
         
-        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=3mo&includePrePost=false`;
+        console.log('📊 Fetching COMPLETE stock data from Yahoo Finance:', ticker);
         
-        console.log('Fetching real stock data from Yahoo Finance:', ticker);
+        // Fetch both chart data and quote summary for complete information
+        const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y&includePrePost=false`;
+        const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ticker}`;
         
+        let chartData = null;
+        let quoteData = null;
         let lastError = null;
         
-        // Try each proxy until one works
+        // Fetch chart data
         for (const proxyUrl of proxies) {
             try {
-                const fullUrl = proxyUrl + encodeURIComponent(yahooUrl);
-                console.log('Trying proxy:', proxyUrl.substring(0, 30) + '...');
+                const fullUrl = proxyUrl + encodeURIComponent(chartUrl);
+                const response = await fetch(fullUrl);
                 
-                const response = await fetch(fullUrl, {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 
                 const data = await response.json();
-                
-                // Handle different proxy response formats
-                let chartData;
+                let parsed;
                 if (data.contents) {
-                    chartData = JSON.parse(data.contents);
+                    parsed = JSON.parse(data.contents);
                 } else if (data.chart) {
-                    chartData = data;
+                    parsed = data;
                 } else {
                     throw new Error('Unexpected response format');
                 }
                 
-                if (!chartData.chart || !chartData.chart.result || chartData.chart.result.length === 0) {
-                    throw new Error('Stock not found in Yahoo Finance');
+                if (parsed.chart && parsed.chart.result && parsed.chart.result.length > 0) {
+                    chartData = parsed.chart.result[0];
+                    break;
                 }
-                
-                const result = chartData.chart.result[0];
-                const meta = result.meta;
-                
-                if (!meta || !meta.regularMarketPrice) {
-                    throw new Error('Invalid stock data received');
-                }
-                
-                const quotes = result.indicators.quote[0];
-                const timestamps = result.timestamp;
-                
-                // Get current price
-                const currentPrice = meta.regularMarketPrice || meta.previousClose || 0;
-                
-                // Calculate changes from historical data
-                const closes = quotes.close.filter((v, i) => v !== null && v !== undefined);
-                if (closes.length === 0) {
-                    throw new Error('No price data available');
-                }
-                
-                const currentIdx = closes.length - 1;
-                const oneDayAgo = closes[currentIdx - 1] || currentPrice;
-                const oneWeekAgo = closes[Math.max(0, currentIdx - 5)] || currentPrice;
-                const oneMonthAgo = closes[Math.max(0, currentIdx - 20)] || currentPrice;
-                
-                const change1D = oneDayAgo ? ((currentPrice - oneDayAgo) / oneDayAgo) * 100 : 0;
-                const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
-                const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
-                
-                // Get additional data
-                const fiftyTwoWeekHigh = meta.fiftyTwoWeekHigh || meta.regularMarketDayHigh || currentPrice;
-                const delta52W = fiftyTwoWeekHigh ? ((currentPrice - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100 : 0;
-                
-                // Get sector from meta
-                const sector = meta.sector || meta.industry || 'N/A';
-                
-                console.log('✅ Successfully fetched real data for', ticker, 'Price:', currentPrice);
-                
-                return {
-                    ticker: meta.symbol || ticker,
-                    sector: sector,
-                    price: parseFloat(currentPrice).toFixed(2),
-                    change1D: change1D.toFixed(2),
-                    change1W: change1W.toFixed(2),
-                    change1M: change1M.toFixed(2),
-                    pe: meta.trailingPE ? parseFloat(meta.trailingPE).toFixed(2) : 'N/A',
-                    peg: meta.pegRatio ? parseFloat(meta.pegRatio).toFixed(2) : 'N/A',
-                    eps: meta.trailingEps ? parseFloat(meta.trailingEps).toFixed(2) : 'N/A',
-                    dividend: meta.dividendYield ? (parseFloat(meta.dividendYield) * 100).toFixed(2) : '0.00',
-                    high52W: parseFloat(fiftyTwoWeekHigh).toFixed(2),
-                    delta52W: delta52W.toFixed(2),
-                    chartData: closes.slice(-30) // Last 30 days
-                };
-            } catch (proxyError) {
-                console.warn('Proxy failed:', proxyUrl.substring(0, 30), proxyError.message);
-                lastError = proxyError;
-                continue; // Try next proxy
+            } catch (err) {
+                lastError = err;
+                continue;
             }
         }
         
-        // All proxies failed
-        throw lastError || new Error('All proxy attempts failed');
+        // Fetch quote data for additional metrics
+        for (const proxyUrl of proxies) {
+            try {
+                const fullUrl = proxyUrl + encodeURIComponent(quoteUrl);
+                const response = await fetch(fullUrl);
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                let parsed;
+                if (data.contents) {
+                    parsed = JSON.parse(data.contents);
+                } else if (data.quoteResponse) {
+                    parsed = data;
+                } else {
+                    throw new Error('Unexpected quote format');
+                }
+                
+                if (parsed.quoteResponse && parsed.quoteResponse.result && parsed.quoteResponse.result.length > 0) {
+                    quoteData = parsed.quoteResponse.result[0];
+                    break;
+                }
+            } catch (err) {
+                // Continue if quote fetch fails, we'll use chart data only
+                continue;
+            }
+        }
         
+        if (!chartData) {
+            throw new Error('Could not fetch stock data');
+        }
+        
+        const meta = chartData.meta;
+        const quotes = chartData.indicators.quote[0];
+        
+        if (!meta || !meta.regularMarketPrice) {
+            throw new Error('Invalid stock data received');
+        }
+        
+        const currentPrice = meta.regularMarketPrice || meta.previousClose || 0;
+        const closes = quotes.close.filter(v => v !== null && v !== undefined);
+        
+        if (closes.length === 0) {
+            throw new Error('No price data available');
+        }
+        
+        // Calculate changes
+        const currentIdx = closes.length - 1;
+        const oneDayAgo = closes[currentIdx - 1] || currentPrice;
+        const oneWeekAgo = closes[Math.max(0, currentIdx - 5)] || currentPrice;
+        const oneMonthAgo = closes[Math.max(0, currentIdx - 20)] || currentPrice;
+        
+        const change1D = oneDayAgo ? ((currentPrice - oneDayAgo) / oneDayAgo) * 100 : 0;
+        const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
+        const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
+        
+        // Get comprehensive data from both sources
+        const fiftyTwoWeekHigh = meta.fiftyTwoWeekHigh || quoteData?.fiftyTwoWeekHigh || currentPrice;
+        const fiftyTwoWeekLow = meta.fiftyTwoWeekLow || quoteData?.fiftyTwoWeekLow || currentPrice;
+        const delta52W = fiftyTwoWeekHigh ? ((currentPrice - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100 : 0;
+        
+        // Get financial metrics (prioritize quote data, fallback to meta)
+        const pe = quoteData?.trailingPE || meta.trailingPE || quoteData?.forwardPE || 'N/A';
+        const peg = quoteData?.pegRatio || meta.pegRatio || 'N/A';
+        const eps = quoteData?.trailingEps || meta.trailingEps || quoteData?.forwardEps || 'N/A';
+        const dividendYield = quoteData?.dividendYield || meta.dividendYield || 0;
+        const marketCap = quoteData?.marketCap || meta.marketCap || 'N/A';
+        const volume = quoteData?.regularMarketVolume || meta.regularMarketVolume || 0;
+        const avgVolume = quoteData?.averageDailyVolume10Day || quoteData?.averageVolume || 'N/A';
+        
+        // Get sector and industry
+        const sector = quoteData?.sector || meta.sector || quoteData?.industry || meta.industry || 'N/A';
+        const industry = quoteData?.industry || meta.industry || 'N/A';
+        
+        console.log('✅ Successfully fetched COMPLETE data for', ticker);
+        console.log('   Price:', currentPrice, '| P/E:', pe, '| EPS:', eps, '| Dividend:', dividendYield);
+        
+        return {
+            ticker: meta.symbol || ticker,
+            sector: sector,
+            industry: industry,
+            price: parseFloat(currentPrice).toFixed(2),
+            change1D: change1D.toFixed(2),
+            change1W: change1W.toFixed(2),
+            change1M: change1M.toFixed(2),
+            pe: pe !== 'N/A' ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' ? parseFloat(eps).toFixed(2) : 'N/A',
+            dividend: dividendYield ? (parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
+            high52W: parseFloat(fiftyTwoWeekHigh).toFixed(2),
+            low52W: parseFloat(fiftyTwoWeekLow).toFixed(2),
+            delta52W: delta52W.toFixed(2),
+            marketCap: marketCap !== 'N/A' ? formatMarketCap(marketCap) : 'N/A',
+            volume: formatVolume(volume),
+            avgVolume: avgVolume !== 'N/A' ? formatVolume(avgVolume) : 'N/A',
+            chartData: closes, // Full year of data
+            chartTimestamps: chartData.timestamp || [],
+            fullChartData: closes // Store full data for all timeframes
+        };
     } catch (error) {
         console.error('Yahoo Finance error for', ticker, ':', error);
         throw new Error(`Failed to fetch real stock data: ${error.message}`);
     }
+}
+
+// Helper function to format market cap
+function formatMarketCap(value) {
+    if (value >= 1e12) return (value / 1e12).toFixed(2) + 'T';
+    if (value >= 1e9) return (value / 1e9).toFixed(2) + 'B';
+    if (value >= 1e6) return (value / 1e6).toFixed(2) + 'M';
+    return value.toFixed(0);
+}
+
+// Helper function to format volume
+function formatVolume(value) {
+    if (value >= 1e9) return (value / 1e9).toFixed(2) + 'B';
+    if (value >= 1e6) return (value / 1e6).toFixed(2) + 'M';
+    if (value >= 1e3) return (value / 1e3).toFixed(2) + 'K';
+    return value.toFixed(0);
 }
 
 // Alpha Vantage API (requires free API key)
@@ -612,20 +663,84 @@ async function openStockDetail(ticker) {
     }
 }
 
+// Fetch chart data for specific timeframe
+async function fetchChartDataForTimeframe(ticker, timeframe) {
+    const timeframes = {
+        '1D': { interval: '5m', range: '1d' },
+        '1W': { interval: '15m', range: '5d' },
+        '1M': { interval: '1d', range: '1mo' },
+        '3M': { interval: '1d', range: '3mo' },
+        '6M': { interval: '1d', range: '6mo' },
+        '1Y': { interval: '1d', range: '1y' },
+        '5Y': { interval: '1wk', range: '5y' }
+    };
+    
+    const config = timeframes[timeframe] || timeframes['1M'];
+    const proxies = ['https://api.allorigins.win/get?url=', 'https://corsproxy.io/?'];
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${config.interval}&range=${config.range}`;
+    
+    for (const proxyUrl of proxies) {
+        try {
+            const response = await fetch(proxyUrl + encodeURIComponent(yahooUrl));
+            if (!response.ok) continue;
+            
+            const data = await response.json();
+            let parsed;
+            if (data.contents) {
+                parsed = JSON.parse(data.contents);
+            } else if (data.chart) {
+                parsed = data;
+            } else {
+                continue;
+            }
+            
+            if (parsed.chart && parsed.chart.result && parsed.chart.result.length > 0) {
+                const result = parsed.chart.result[0];
+                const quotes = result.indicators.quote[0];
+                const closes = quotes.close.filter(v => v !== null && v !== undefined);
+                const timestamps = result.timestamp;
+                
+                return {
+                    data: closes,
+                    timestamps: timestamps,
+                    labels: timestamps.map(ts => new Date(ts * 1000))
+                };
+            }
+        } catch (error) {
+            console.warn(`Failed to fetch ${timeframe} data:`, error);
+            continue;
+        }
+    }
+    
+    return null;
+}
+
 function renderStockDetail(stock) {
     const container = document.getElementById('stock-detail-content');
     if (!container) return;
     
     const delta52W = parseFloat(stock.delta52W) || 0;
+    const low52W = parseFloat(stock.low52W) || 0;
     
     container.innerHTML = `
         <div class="stock-detail-header">
             <h1>${stock.ticker}</h1>
-            <div class="ticker">${stock.sector}</div>
+            <div class="ticker">${stock.sector} ${stock.industry ? '• ' + stock.industry : ''}</div>
         </div>
         
         <div class="chart-container">
-            <h3>Price Chart</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="margin: 0;">Price Chart</h3>
+                <div class="timeframe-selector">
+                    <button class="timeframe-btn active" data-timeframe="1D" onclick="changeChartTimeframe('1D')">1D</button>
+                    <button class="timeframe-btn" data-timeframe="1W" onclick="changeChartTimeframe('1W')">1W</button>
+                    <button class="timeframe-btn" data-timeframe="1M" onclick="changeChartTimeframe('1M')">1M</button>
+                    <button class="timeframe-btn" data-timeframe="3M" onclick="changeChartTimeframe('3M')">3M</button>
+                    <button class="timeframe-btn" data-timeframe="6M" onclick="changeChartTimeframe('6M')">6M</button>
+                    <button class="timeframe-btn" data-timeframe="1Y" onclick="changeChartTimeframe('1Y')">1Y</button>
+                    <button class="timeframe-btn" data-timeframe="5Y" onclick="changeChartTimeframe('5Y')">5Y</button>
+                </div>
+            </div>
             <div class="chart-wrapper">
                 <canvas id="main-chart"></canvas>
             </div>
@@ -675,41 +790,139 @@ function renderStockDetail(stock) {
                 <div class="metric-value">$${parseFloat(stock.high52W).toFixed(2)}</div>
             </div>
             <div class="metric-card">
+                <div class="metric-label">52 Week Low</div>
+                <div class="metric-value">$${low52W.toFixed(2)}</div>
+            </div>
+            <div class="metric-card">
                 <div class="metric-label">Delta from 52W High</div>
                 <div class="metric-value ${delta52W >= 0 ? 'positive' : 'negative'}">
                     ${delta52W >= 0 ? '+' : ''}${delta52W.toFixed(2)}%
                 </div>
             </div>
+            ${stock.marketCap !== 'N/A' ? `
+            <div class="metric-card">
+                <div class="metric-label">Market Cap</div>
+                <div class="metric-value">$${stock.marketCap}</div>
+            </div>
+            ` : ''}
+            ${stock.volume ? `
+            <div class="metric-card">
+                <div class="metric-label">Volume</div>
+                <div class="metric-value">${stock.volume}</div>
+            </div>
+            ` : ''}
+            ${stock.avgVolume !== 'N/A' ? `
+            <div class="metric-card">
+                <div class="metric-label">Avg Volume</div>
+                <div class="metric-value">${stock.avgVolume}</div>
+            </div>
+            ` : ''}
         </div>
     `;
 
-    // Render interactive chart
+    // Store stock data for timeframe switching
+    window.currentStockData = stock;
+    window.currentTimeframe = '1M';
+
+    // Render interactive chart with default timeframe
     setTimeout(() => {
-        renderInteractiveChart(stock.chartData || generateMockChartData());
+        renderInteractiveChart(stock.chartData || generateMockChartData(), stock.chartTimestamps || []);
     }, 100);
 }
 
-function renderInteractiveChart(data) {
+// Change chart timeframe
+async function changeChartTimeframe(timeframe) {
+    if (!currentStockTicker) return;
+    
+    // Update active button
+    document.querySelectorAll('.timeframe-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.timeframe === timeframe) {
+            btn.classList.add('active');
+        }
+    });
+    
+    // Show loading
+    const canvas = document.getElementById('main-chart');
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#667eea';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Loading...', canvas.width / 2, canvas.height / 2);
+    }
+    
+    try {
+        const chartData = await fetchChartDataForTimeframe(currentStockTicker, timeframe);
+        if (chartData && chartData.data) {
+            window.currentTimeframe = timeframe;
+            renderInteractiveChart(chartData.data, chartData.timestamps, chartData.labels);
+        } else {
+            // Fallback to existing data
+            if (window.currentStockData && window.currentStockData.chartData) {
+                renderInteractiveChart(window.currentStockData.chartData, window.currentStockData.chartTimestamps || []);
+            }
+        }
+    } catch (error) {
+        console.error('Error fetching timeframe data:', error);
+        alert('Failed to load chart data for this timeframe');
+    }
+}
+
+function renderInteractiveChart(data, timestamps = [], labels = null) {
     const ctx = document.getElementById('main-chart');
     if (!ctx) return;
 
-    // Generate labels for the chart
-    const labels = data.map((_, index) => `Day ${index + 1}`);
+    // Generate labels from timestamps or use provided labels
+    let chartLabels;
+    if (labels && labels.length > 0) {
+        chartLabels = labels.map(date => {
+            if (date instanceof Date) {
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+            return date;
+        });
+    } else if (timestamps && timestamps.length > 0) {
+        chartLabels = timestamps.map(ts => {
+            const date = new Date(ts * 1000);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+    } else {
+        chartLabels = data.map((_, index) => {
+            const date = new Date();
+            date.setDate(date.getDate() - (data.length - index));
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+    }
 
-    new Chart(ctx, {
+    // Determine chart color based on trend
+    const firstPrice = data[0];
+    const lastPrice = data[data.length - 1];
+    const isPositive = lastPrice >= firstPrice;
+    const chartColor = isPositive ? '#2ecc71' : '#e74c3c';
+
+    // Destroy existing chart if it exists
+    if (window.currentChart) {
+        window.currentChart.destroy();
+    }
+
+    window.currentChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: labels,
+            labels: chartLabels,
             datasets: [{
                 label: 'Price',
                 data: data,
-                borderColor: '#667eea',
-                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                borderColor: chartColor,
+                backgroundColor: isPositive ? 'rgba(46, 204, 113, 0.1)' : 'rgba(231, 76, 60, 0.1)',
                 borderWidth: 2,
                 fill: true,
                 tension: 0.4,
                 pointRadius: 0,
-                pointHoverRadius: 5
+                pointHoverRadius: 6,
+                pointHoverBorderWidth: 2,
+                pointHoverBackgroundColor: chartColor
             }]
         },
         options: {
@@ -725,13 +938,19 @@ function renderInteractiveChart(data) {
                 },
                 tooltip: {
                     enabled: true,
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    backgroundColor: 'rgba(0, 0, 0, 0.9)',
                     padding: 12,
                     titleFont: {
-                        size: 14
+                        size: 14,
+                        weight: 'bold'
                     },
                     bodyFont: {
-                        size: 12
+                        size: 13
+                    },
+                    callbacks: {
+                        label: function(context) {
+                            return `$${parseFloat(context.parsed.y).toFixed(2)}`;
+                        }
                     }
                 }
             },
@@ -740,11 +959,19 @@ function renderInteractiveChart(data) {
                     beginAtZero: false,
                     grid: {
                         color: 'rgba(0, 0, 0, 0.1)'
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
                     }
                 },
                 x: {
                     grid: {
                         display: false
+                    },
+                    ticks: {
+                        maxTicksLimit: 10
                     }
                 }
             }
