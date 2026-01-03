@@ -1,23 +1,5 @@
-// API Configuration - Using Render API (no API key needed!)
-// Your Render API handles all the data fetching
+// API Configuration - Simple working solution
 const RENDER_API_URL = 'https://stockappv3.onrender.com';
-const USE_RENDER_API = true; // Primary method - uses your Render API
-
-// Web scraping fallback (no API key needed)
-const USE_WEB_SCRAPING = true; // Fallback when Render API is rate limited
-
-// Yahoo Finance (disabled)
-const USE_YAHOO_FINANCE_DIRECT = false; // Disabled - unreliable
-
-// Finnhub API (requires free API key)
-const USE_FINNHUB_API = false; // Disabled - requires API key
-
-// Financial Modeling Prep API (requires API key)
-const USE_FMP_API = false; // Disabled - requires API key
-
-// Alpha Vantage (Free API) - Backup option
-const ALPHA_VANTAGE_API_KEY = 'demo'; // Replace with your free API key from alphavantage.co
-const API_BASE_URL = 'https://www.alphavantage.co/query';
 
 // State Management
 let watchlists = JSON.parse(localStorage.getItem('watchlists')) || [];
@@ -215,40 +197,145 @@ async function searchByCompanyName() {
     }
 }
 
-// API Functions - Use Render API with web scraping fallback (no API keys needed!)
+// API Functions - Simple, working solution
 async function fetchStockData(ticker) {
     try {
-        // Try Render API first (your backend)
-        if (USE_RENDER_API) {
-            try {
-                const renderData = await fetchRenderAPI(ticker);
-                if (renderData && renderData.pe !== 'N/A' && renderData.pe !== undefined) {
-                    console.log('✅ Render API succeeded for', ticker);
-                    return renderData;
-                }
-            } catch (renderError) {
-                console.warn('Render API failed, trying web scraping:', renderError.message);
+        // Try Render API first
+        try {
+            const renderData = await fetchRenderAPI(ticker);
+            if (renderData) {
+                console.log('✅ Render API succeeded for', ticker);
+                return renderData;
             }
+        } catch (renderError) {
+            console.warn('Render API failed, using direct method:', renderError.message);
         }
         
-        // Fallback to web scraping (no API key needed)
-        if (USE_WEB_SCRAPING) {
-            try {
-                const scrapedData = await fetchStockDataViaScraping(ticker);
-                if (scrapedData) {
-                    console.log('✅ Web scraping succeeded for', ticker);
-                    return scrapedData;
-                }
-            } catch (scrapeError) {
-                console.warn('Web scraping failed:', scrapeError.message);
-            }
-        }
-        
-        throw new Error('All data sources failed');
+        // Use direct Yahoo Finance method that works
+        return await fetchStockDataDirect(ticker);
     } catch (error) {
         console.error('Error fetching stock data:', error);
         console.error(`Failed to fetch stock data for ${ticker}: ${error.message}`);
         return null;
+    }
+}
+
+// Direct method - Simple, working solution using Yahoo Finance quote endpoint
+async function fetchStockDataDirect(ticker) {
+    try {
+        console.log('📊 Fetching stock data directly:', ticker);
+        
+        // Use multiple CORS proxies for reliability
+        const proxies = [
+            'https://api.allorigins.win/raw?url=',
+            'https://corsproxy.io/?',
+            'https://api.codetabs.com/v1/proxy?quest='
+        ];
+        
+        let quote = null;
+        let chartData = null;
+        
+        // Fetch quote data (has P/E, PEG, EPS, etc.)
+        for (const proxy of proxies) {
+            try {
+                const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ticker}`;
+                const response = await fetch(proxy + encodeURIComponent(quoteUrl));
+                if (!response.ok) continue;
+                
+                const data = await response.json();
+                const parsed = data.contents ? JSON.parse(data.contents) : data;
+                
+                if (parsed.quoteResponse?.result?.[0]) {
+                    quote = parsed.quoteResponse.result[0];
+                    console.log('✅ Quote data fetched');
+                    break;
+                }
+            } catch (err) {
+                continue;
+            }
+        }
+        
+        if (!quote) {
+            throw new Error('Could not fetch quote data');
+        }
+        
+        // Fetch chart data
+        for (const proxy of proxies) {
+            try {
+                const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`;
+                const response = await fetch(proxy + encodeURIComponent(chartUrl));
+                if (!response.ok) continue;
+                
+                const data = await response.json();
+                const parsed = data.contents ? JSON.parse(data.contents) : data;
+                
+                if (parsed.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
+                    chartData = parsed.chart.result[0].indicators.quote[0].close.filter(v => v !== null && v !== undefined);
+                    break;
+                }
+            } catch (err) {
+                continue;
+            }
+        }
+        
+        const currentPrice = quote.regularMarketPrice || quote.price || 0;
+        const closes = chartData || [currentPrice];
+        
+        // Calculate changes
+        const currentIdx = closes.length - 1;
+        const oneDayAgo = closes[currentIdx - 1] || currentPrice;
+        const oneWeekAgo = closes[Math.max(0, currentIdx - 5)] || currentPrice;
+        const oneMonthAgo = closes[Math.max(0, currentIdx - 20)] || currentPrice;
+        
+        const change1D = oneDayAgo ? ((currentPrice - oneDayAgo) / oneDayAgo) * 100 : 0;
+        const change1W = oneWeekAgo ? ((currentPrice - oneWeekAgo) / oneWeekAgo) * 100 : 0;
+        const change1M = oneMonthAgo ? ((currentPrice - oneMonthAgo) / oneMonthAgo) * 100 : 0;
+        
+        const high52W = quote.fiftyTwoWeekHigh || Math.max(...closes) || currentPrice;
+        const low52W = quote.fiftyTwoWeekLow || Math.min(...closes) || currentPrice;
+        const delta52W = high52W ? ((currentPrice - high52W) / high52W) * 100 : 0;
+        
+        // Get ALL financial metrics from quote
+        const pe = quote.trailingPE || quote.forwardPE || 'N/A';
+        const peg = quote.pegRatio || 'N/A';
+        const eps = quote.trailingEps || quote.forwardEps || 'N/A';
+        const dividendYield = quote.dividendYield || 0;
+        const marketCap = quote.marketCap || 'N/A';
+        const volume = quote.regularMarketVolume || 0;
+        const avgVolume = quote.averageDailyVolume10Day || quote.averageVolume || 'N/A';
+        const sector = quote.sector || 'N/A';
+        const industry = quote.industry || 'N/A';
+        
+        console.log('✅ Direct data fetched for', ticker);
+        console.log('   P/E:', pe, '| PEG:', peg, '| EPS:', eps);
+        console.log('   Sector:', sector, '| Industry:', industry);
+        console.log('   Market Cap:', marketCap, '| Volume:', volume);
+        
+        return {
+            ticker: ticker.toUpperCase(),
+            sector: sector,
+            industry: industry,
+            price: parseFloat(currentPrice).toFixed(2),
+            change1D: change1D.toFixed(2),
+            change1W: change1W.toFixed(2),
+            change1M: change1M.toFixed(2),
+            pe: pe !== 'N/A' && pe !== null && pe !== undefined && pe !== 0 ? parseFloat(pe).toFixed(2) : 'N/A',
+            peg: peg !== 'N/A' && peg !== null && peg !== undefined && peg !== 0 ? parseFloat(peg).toFixed(2) : 'N/A',
+            eps: eps !== 'N/A' && eps !== null && eps !== undefined && eps !== 0 ? parseFloat(eps).toFixed(2) : 'N/A',
+            dividend: dividendYield && dividendYield !== 0 ? (parseFloat(dividendYield) * 100).toFixed(2) : '0.00',
+            high52W: parseFloat(high52W).toFixed(2),
+            low52W: parseFloat(low52W).toFixed(2),
+            delta52W: delta52W.toFixed(2),
+            marketCap: marketCap !== 'N/A' && marketCap !== null && marketCap !== undefined && marketCap !== 0 ? formatMarketCap(marketCap) : 'N/A',
+            volume: formatVolume(volume),
+            avgVolume: avgVolume !== 'N/A' && avgVolume !== null && avgVolume !== undefined && avgVolume !== 0 ? formatVolume(avgVolume) : 'N/A',
+            chartData: closes,
+            chartTimestamps: [],
+            fullChartData: closes
+        };
+    } catch (error) {
+        console.error('Direct fetch error:', error);
+        throw error;
     }
 }
 
